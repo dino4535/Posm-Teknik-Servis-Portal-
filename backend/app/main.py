@@ -152,11 +152,12 @@ async def root():
 async def health():
     """Health check endpoint - DB bağlantısını kontrol et"""
     from app.db.session import engine
+    from sqlalchemy import text
     
     try:
         # DB bağlantısını test et
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
         
         return {
             "status": "healthy",
