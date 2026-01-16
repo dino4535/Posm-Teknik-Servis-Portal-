@@ -261,23 +261,23 @@ docker compose up -d --build
 
 echo -e "${GREEN}✅ Docker servisleri başlatıldı${NC}"
 
-# 12. Migration'ları Çalıştırma
+# 13. Migration'ları Çalıştırma
 echo -e "${YELLOW}🔄 Database migration'ları çalıştırılıyor...${NC}"
 
-sleep 5  # API'nin başlaması için bekle
+sleep 10  # API'nin başlaması için bekle
 
-docker compose exec api alembic upgrade head
+docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 
 echo -e "${GREEN}✅ Migration'lar tamamlandı${NC}"
 
-# 13. Admin Kullanıcı Oluşturma
+# 14. Admin Kullanıcı Oluşturma
 echo -e "${YELLOW}👤 Admin kullanıcı oluşturuluyor...${NC}"
 
-docker compose exec api python scripts/create_admin.py
+docker compose -f docker-compose.prod.yml exec api python scripts/create_admin.py
 
 echo -e "${GREEN}✅ Admin kullanıcı oluşturuldu${NC}"
 
-# 14. Firewall Yapılandırması
+# 15. Firewall Yapılandırması
 echo -e "${YELLOW}🔥 Firewall yapılandırılıyor...${NC}"
 
 if command -v ufw &> /dev/null; then
@@ -294,7 +294,7 @@ if command -v ufw &> /dev/null; then
     fi
 fi
 
-# 15. Servis Durumu Kontrolü
+# 16. Servis Durumu Kontrolü
 echo -e "${YELLOW}🔍 Servis durumu kontrol ediliyor...${NC}"
 
 sleep 3
@@ -307,9 +307,10 @@ else
 fi
 
 # Docker servisleri kontrolü
-docker compose ps
+echo -e "${YELLOW}🐳 Docker servisleri:${NC}"
+docker compose -f docker-compose.prod.yml ps
 
-# 16. Özet Bilgiler
+# 17. Özet Bilgiler
 echo ""
 echo -e "${BLUE}=================================================="
 echo -e "🎉 Kurulum Tamamlandı!${NC}"
@@ -327,8 +328,11 @@ echo -e "${YELLOW}⚠️  Bu bilgileri güvenli bir yerde saklayın!${NC}"
 echo ""
 echo -e "${GREEN}🌐 Erişim Bilgileri:${NC}"
 echo -e "   Frontend: http://${SERVER_IP}"
-echo -e "   API: http://${SERVER_IP}:8000"
-echo -e "   API Docs: http://${SERVER_IP}:8000/docs"
+echo -e "   API: http://${SERVER_IP}:8000 (sadece localhost'tan erişilebilir)"
+echo -e "   API Docs: http://localhost:8000/docs (sunucu üzerinden)"
+echo ""
+echo -e "${YELLOW}⚠️  Not: API sadece localhost'tan erişilebilir (güvenlik için)${NC}"
+echo -e "   Nginx reverse proxy kullanarak dışarıdan erişim sağlayabilirsiniz"
 echo ""
 echo -e "${GREEN}📝 Sonraki Adımlar:${NC}"
 echo "   1. Domain name'inizi DNS'te bu sunucuya yönlendirin"
