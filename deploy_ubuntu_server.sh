@@ -26,8 +26,6 @@ sudo apt install -y \
     curl \
     wget \
     git \
-    postgresql-16 \
-    postgresql-contrib-16 \
     python3 \
     python3-pip \
     python3-venv \
@@ -38,7 +36,27 @@ sudo apt install -y \
     gnupg \
     lsb-release
 
-# 3. Docker Kurulumu
+# 3. PostgreSQL Repository Ekleme
+echo -e "${YELLOW}📦 PostgreSQL repository ekleniyor...${NC}"
+if ! grep -q "apt.postgresql.org" /etc/apt/sources.list.d/pgdg.list 2>/dev/null; then
+    # PostgreSQL official repository ekle
+    sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+    
+    # GPG key ekle
+    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+    
+    # Repository'yi güncelle
+    sudo apt update
+    echo -e "${GREEN}✅ PostgreSQL repository eklendi${NC}"
+else
+    echo -e "${GREEN}✅ PostgreSQL repository zaten mevcut${NC}"
+fi
+
+# PostgreSQL 16 kurulumu
+echo -e "${YELLOW}📦 PostgreSQL 16 kuruluyor...${NC}"
+sudo apt install -y postgresql-16 postgresql-contrib-16
+
+# 4. Docker Kurulumu
 echo -e "${YELLOW}🐳 Docker kurulumu kontrol ediliyor...${NC}"
 if ! command -v docker &> /dev/null; then
     echo "Docker kuruluyor..."
@@ -61,7 +79,7 @@ else
     echo -e "${GREEN}✅ Docker zaten kurulu${NC}"
 fi
 
-# 4. Docker Compose Kurulumu
+# 5. Docker Compose Kurulumu
 echo -e "${YELLOW}🐳 Docker Compose kurulumu kontrol ediliyor...${NC}"
 if ! command -v docker compose &> /dev/null; then
     echo "Docker Compose kuruluyor..."
@@ -71,13 +89,13 @@ else
     echo -e "${GREEN}✅ Docker Compose zaten kurulu${NC}"
 fi
 
-# 5. Proje Klasörü Oluşturma
+# 6. Proje Klasörü Oluşturma
 echo -e "${YELLOW}📁 Proje klasörü oluşturuluyor...${NC}"
 PROJECT_DIR="/opt/teknik-servis"
 sudo mkdir -p $PROJECT_DIR
 sudo chown $USER:$USER $PROJECT_DIR
 
-# 6. GitHub'dan Projeyi Clone Etme
+# 7. GitHub'dan Projeyi Clone Etme
 echo -e "${YELLOW}📥 GitHub'dan proje indiriliyor...${NC}"
 cd $PROJECT_DIR
 
@@ -95,7 +113,7 @@ fi
 
 echo -e "${GREEN}✅ Proje indirildi${NC}"
 
-# 7. .env Dosyası Oluşturma
+# 8. .env Dosyası Oluşturma
 echo -e "${YELLOW}⚙️  .env dosyası oluşturuluyor...${NC}"
 
 # Sunucu IP'sini otomatik al
@@ -152,7 +170,7 @@ echo -e "${YELLOW}⚠️  ÖNEMLİ: .env dosyasındaki şifreleri not edin!${NC}
 echo -e "${BLUE}   DB_PASSWORD: ${DB_PASSWORD}${NC}"
 echo -e "${BLUE}   SECRET_KEY: ${SECRET_KEY}${NC}"
 
-# 8. PostgreSQL Kurulumu ve Yapılandırması
+# 9. PostgreSQL Yapılandırması
 echo -e "${YELLOW}🗄️  PostgreSQL yapılandırılıyor...${NC}"
 
 # PostgreSQL servisini başlat
@@ -187,7 +205,7 @@ EOF
 
 echo -e "${GREEN}✅ PostgreSQL yapılandırıldı${NC}"
 
-# 9. Backup Dosyası Kontrolü ve Restore
+# 10. Backup Dosyası Kontrolü ve Restore
 echo -e "${YELLOW}📥 Veritabanı backup'ı kontrol ediliyor...${NC}"
 
 if [ -f "teknik_servis_backup.sql" ]; then
@@ -199,7 +217,7 @@ else
     echo "Migration'lar çalıştırılacak..."
 fi
 
-# 10. Docker Compose ile Servisleri Başlatma
+# 11. Docker Compose ile Servisleri Başlatma
 echo -e "${YELLOW}🐳 Docker servisleri başlatılıyor...${NC}"
 
 # docker-compose.yml'de DB servisini kaldır (sunucu PostgreSQL kullanıyoruz)
@@ -243,7 +261,7 @@ docker compose up -d --build
 
 echo -e "${GREEN}✅ Docker servisleri başlatıldı${NC}"
 
-# 11. Migration'ları Çalıştırma
+# 12. Migration'ları Çalıştırma
 echo -e "${YELLOW}🔄 Database migration'ları çalıştırılıyor...${NC}"
 
 sleep 5  # API'nin başlaması için bekle
@@ -252,14 +270,14 @@ docker compose exec api alembic upgrade head
 
 echo -e "${GREEN}✅ Migration'lar tamamlandı${NC}"
 
-# 12. Admin Kullanıcı Oluşturma
+# 13. Admin Kullanıcı Oluşturma
 echo -e "${YELLOW}👤 Admin kullanıcı oluşturuluyor...${NC}"
 
 docker compose exec api python scripts/create_admin.py
 
 echo -e "${GREEN}✅ Admin kullanıcı oluşturuldu${NC}"
 
-# 13. Firewall Yapılandırması
+# 14. Firewall Yapılandırması
 echo -e "${YELLOW}🔥 Firewall yapılandırılıyor...${NC}"
 
 if command -v ufw &> /dev/null; then
@@ -276,7 +294,7 @@ if command -v ufw &> /dev/null; then
     fi
 fi
 
-# 14. Servis Durumu Kontrolü
+# 15. Servis Durumu Kontrolü
 echo -e "${YELLOW}🔍 Servis durumu kontrol ediliyor...${NC}"
 
 sleep 3
@@ -291,7 +309,7 @@ fi
 # Docker servisleri kontrolü
 docker compose ps
 
-# 15. Özet Bilgiler
+# 16. Özet Bilgiler
 echo ""
 echo -e "${BLUE}=================================================="
 echo -e "🎉 Kurulum Tamamlandı!${NC}"
