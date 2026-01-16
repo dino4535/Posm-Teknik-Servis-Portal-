@@ -163,6 +163,10 @@ RATE_LIMIT_PER_MINUTE=60
 # Ports
 API_PORT=8001
 FRONTEND_PORT=5173
+
+# API URL for frontend (use server IP)
+SERVER_IP=\$(curl -s ifconfig.me || hostname -I | awk '{print \$1}')
+API_URL=http://\${SERVER_IP}:8001
 EOF
 
 echo -e "${GREEN}✅ .env dosyası oluşturuldu${NC}"
@@ -257,7 +261,7 @@ services:
     env_file:
       - .env
     ports:
-      - "127.0.0.1:8001:8000"
+      - "0.0.0.0:8001:8000"
     volumes:
       - ./backend:/app
       - uploads_prod:/app/uploads
@@ -274,9 +278,11 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: \${API_URL}
     container_name: teknik_servis_frontend
     ports:
-      - "5173:80"
+      - "0.0.0.0:5173:80"
     depends_on:
       - api
     networks:
