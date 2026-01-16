@@ -47,7 +47,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8000:8000"  # Nginx reverse proxy arkasında
+      - "127.0.0.1:8001:8000"  # Nginx reverse proxy arkasında
     volumes:
       - uploads_prod:/app/uploads
       - backups_prod:/app/backups

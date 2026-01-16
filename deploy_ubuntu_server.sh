@@ -161,7 +161,7 @@ RATE_LIMIT_ENABLED=true
 RATE_LIMIT_PER_MINUTE=60
 
 # Ports
-API_PORT=8000
+API_PORT=8001
 FRONTEND_PORT=80
 EOF
 
@@ -233,7 +233,7 @@ services:
     env_file:
       - .env
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8000"
     volumes:
       - ./backend:/app
       - uploads_prod:/app/uploads
