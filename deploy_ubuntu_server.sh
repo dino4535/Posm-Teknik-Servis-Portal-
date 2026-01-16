@@ -239,6 +239,9 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=tr_TR.UTF-8"
+      LC_ALL: tr_TR.UTF-8
+      LANG: tr_TR.UTF-8
     volumes:
       - db_data_prod:/var/lib/postgresql/data
       - ./backups:/backups
@@ -343,13 +346,16 @@ DB_USER_FROM_ENV=$(grep "^DB_USER=" .env | cut -d '=' -f2)
 # PostgreSQL container'ında kullanıcı zaten POSTGRES_USER ile oluşturulmuş olmalı
 # Sadece veritabanı ve yetkileri kontrol edelim
 docker compose -f docker-compose.prod.yml exec -T db psql -U ${DB_USER_FROM_ENV} -d postgres << EOF
--- Veritabanı oluştur (eğer yoksa)
-SELECT 'CREATE DATABASE teknik_servis OWNER ${DB_USER_FROM_ENV}'
+-- Veritabanı oluştur (eğer yoksa) - UTF-8 encoding ile
+SELECT 'CREATE DATABASE teknik_servis OWNER ${DB_USER_FROM_ENV} ENCODING ''UTF8'' LC_COLLATE=''tr_TR.UTF-8'' LC_CTYPE=''tr_TR.UTF-8'''
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'teknik_servis')\gexec
 
 -- Yetkileri ver
 GRANT ALL PRIVILEGES ON DATABASE teknik_servis TO ${DB_USER_FROM_ENV};
 \c teknik_servis
+-- Client encoding'i UTF-8 yap
+SET client_encoding = 'UTF8';
+-- Mevcut tablolar için encoding kontrolü
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER_FROM_ENV};
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER_FROM_ENV};
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER_FROM_ENV};
