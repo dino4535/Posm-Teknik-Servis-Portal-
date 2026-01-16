@@ -125,8 +125,8 @@ SECRET_KEY=$(openssl rand -hex 32)
 
 # .env dosyası oluştur
 cat > .env << EOF
-# Database - Sunucu PostgreSQL (Docker container'dan erişim için host.docker.internal kullanılacak)
-DATABASE_URL=postgresql://app:${DB_PASSWORD}@host.docker.internal:5432/teknik_servis
+# Database - Docker PostgreSQL container
+DATABASE_URL=postgresql://app:${DB_PASSWORD}@db:5432/teknik_servis
 DB_USER=app
 DB_PASSWORD=${DB_PASSWORD}
 DB_NAME=teknik_servis
@@ -205,26 +205,50 @@ EOF
 
 echo -e "${GREEN}✅ PostgreSQL yapılandırıldı${NC}"
 
-# 10. Backup Dosyası Kontrolü ve Restore
+# 10. Backup Dosyası Kontrolü (Docker container başladıktan sonra restore edilecek)
 echo -e "${YELLOW}📥 Veritabanı backup'ı kontrol ediliyor...${NC}"
 
 if [ -f "teknik_servis_backup.sql" ]; then
-    echo "Backup dosyası bulundu, restore ediliyor..."
-    sudo -u postgres psql -d teknik_servis < teknik_servis_backup.sql
-    echo -e "${GREEN}✅ Veritabanı restore edildi${NC}"
+    echo -e "${GREEN}✅ Backup dosyası bulundu (Docker container başladıktan sonra restore edilecek)${NC}"
+    BACKUP_EXISTS=true
 else
     echo -e "${YELLOW}⚠️  Backup dosyası bulunamadı, boş veritabanı ile devam ediliyor${NC}"
     echo "Migration'lar çalıştırılacak..."
+    BACKUP_EXISTS=false
 fi
 
 # 11. Docker Compose Production Dosyası Oluşturma
 echo -e "${YELLOW}🐳 Docker Compose production dosyası oluşturuluyor...${NC}"
 
-# Production docker-compose dosyası oluştur (sadece API ve Frontend, DB yok)
+# .env dosyasındaki DATABASE_URL'i Docker container için güncelle (db servisi kullanılacak)
+sed -i "s|@host.docker.internal:5432|@db:5432|" .env
+
+# Production docker-compose dosyası oluştur (PostgreSQL, API ve Frontend - hepsi Docker'da)
 cat > docker-compose.prod.yml << 'DOCKEREOF'
 version: "3.9"
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: teknik_servis_db
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - db_data_prod:/var/lib/postgresql/data
+      - ./backups:/backups
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+    restart: unless-stopped
+
   api:
     build:
       context: ./backend
@@ -239,11 +263,12 @@ services:
       - uploads_prod:/app/uploads
       - backups_prod:/app/backups
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-access-log
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - app_network
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   frontend:
     build:
@@ -259,6 +284,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  db_data_prod:
+    driver: local
   uploads_prod:
     driver: local
   backups_prod:
@@ -272,9 +299,52 @@ DOCKEREOF
 echo -e "${GREEN}✅ Docker Compose production dosyası oluşturuldu${NC}"
 
 # 12. Docker Compose ile Servisleri Başlatma
-echo -e "${YELLOW}🐳 Docker servisleri başlatılıyor (sadece API ve Frontend)...${NC}"
+echo -e "${YELLOW}🐳 Docker servisleri başlatılıyor (PostgreSQL, API ve Frontend)...${NC}"
 
-# Docker Compose ile servisleri başlat (production compose dosyası ile)
+# Önce DB container'ını başlat
+echo -e "${YELLOW}🗄️  PostgreSQL container başlatılıyor...${NC}"
+docker compose -f docker-compose.prod.yml up -d db
+
+# PostgreSQL'in hazır olmasını bekle
+echo -e "${YELLOW}⏳ PostgreSQL'in hazır olması bekleniyor...${NC}"
+sleep 10
+
+# PostgreSQL container'ında kullanıcı ve veritabanı oluştur
+echo -e "${YELLOW}👤 PostgreSQL kullanıcı ve veritabanı oluşturuluyor...${NC}"
+docker compose -f docker-compose.prod.yml exec -T db psql -U postgres << EOF
+-- Kullanıcı oluştur (eğer yoksa)
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'app') THEN
+        CREATE USER app WITH PASSWORD '${DB_PASSWORD}';
+    ELSE
+        ALTER USER app WITH PASSWORD '${DB_PASSWORD}';
+    END IF;
+END
+\$\$;
+
+-- Veritabanı oluştur (eğer yoksa)
+SELECT 'CREATE DATABASE teknik_servis OWNER app'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'teknik_servis')\gexec
+
+-- Yetkileri ver
+GRANT ALL PRIVILEGES ON DATABASE teknik_servis TO app;
+\c teknik_servis
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO app;
+EOF
+
+# Backup restore (varsa)
+if [ "$BACKUP_EXISTS" = true ]; then
+    echo -e "${YELLOW}📥 Backup restore ediliyor...${NC}"
+    docker compose -f docker-compose.prod.yml exec -T db psql -U app -d teknik_servis < teknik_servis_backup.sql
+    echo -e "${GREEN}✅ Backup restore edildi${NC}"
+fi
+
+# Tüm servisleri başlat
+echo -e "${YELLOW}🚀 Tüm servisler başlatılıyor...${NC}"
 docker compose -f docker-compose.prod.yml up -d --build
 
 echo -e "${GREEN}✅ Docker servisleri başlatıldı${NC}"
@@ -315,18 +385,18 @@ fi
 # 16. Servis Durumu Kontrolü
 echo -e "${YELLOW}🔍 Servis durumu kontrol ediliyor...${NC}"
 
-sleep 3
-
-# PostgreSQL kontrolü
-if sudo systemctl is-active --quiet postgresql; then
-    echo -e "${GREEN}✅ PostgreSQL çalışıyor${NC}"
-else
-    echo -e "${RED}❌ PostgreSQL çalışmıyor!${NC}"
-fi
+sleep 5
 
 # Docker servisleri kontrolü
 echo -e "${YELLOW}🐳 Docker servisleri:${NC}"
 docker compose -f docker-compose.prod.yml ps
+
+# PostgreSQL container kontrolü
+if docker compose -f docker-compose.prod.yml ps | grep -q "teknik_servis_db.*Up"; then
+    echo -e "${GREEN}✅ PostgreSQL container çalışıyor${NC}"
+else
+    echo -e "${RED}❌ PostgreSQL container çalışmıyor!${NC}"
+fi
 
 # 17. Özet Bilgiler
 echo ""
