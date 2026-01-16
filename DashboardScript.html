@@ -1,0 +1,3648 @@
+<script>
+    // Global cache yönetimi
+    const CacheManager = {
+      // Cache süreleri (milisaniye)
+      CACHE_DURATIONS: {
+        DASHBOARD_COUNTS: 5 * 60 * 1000, // 5 dakika
+        ALL_REQUESTS: 5 * 60 * 1000,    // 5 dakika
+        USER_REQUESTS: 3 * 60 * 1000,   // 3 dakika
+        POSM_LIST: 10 * 60 * 1000,      // 10 dakika
+        POSM_MANAGEMENT: 3 * 60 * 1000  // 3 dakika
+      },
+      
+      // Cache'den veri al
+      get(key, duration) {
+        const data = sessionStorage.getItem(key);
+        const time = sessionStorage.getItem(`${key}_time`);
+        
+        if (data && time && (Date.now() - parseInt(time)) < duration) {
+          return JSON.parse(data);
+        }
+        return null;
+      },
+      
+      // Cache'e veri kaydet
+      set(key, data) {
+        sessionStorage.setItem(key, JSON.stringify(data));
+        sessionStorage.setItem(`${key}_time`, Date.now().toString());
+      },
+      
+      // Belirli cache'leri temizle
+      invalidate(keys) {
+        keys.forEach(key => {
+          sessionStorage.removeItem(key);
+          sessionStorage.removeItem(`${key}_time`);
+        });
+      },
+      
+      // Tüm cache'i temizle
+      clear() {
+        const keys = Object.keys(sessionStorage).filter(key => 
+          key.includes('_cache') || key.includes('_time')
+        );
+        keys.forEach(key => sessionStorage.removeItem(key));
+      }
+    };
+    
+    // Sayfa yüklendiğinde çalışacak fonksiyonlar
+    window.onload = function() {
+      // Kullanıcı bilgilerini kontrol et
+      const userData = JSON.parse(localStorage.getItem('userData'));
+      if (!userData) {
+        google.script.run.withSuccessHandler(function(url) {
+          window.location.assign(url + '?page=login');
+        }).getScriptUrl();
+        return;
+      }
+    
+      // Kullanıcı bilgilerini göster
+      document.getElementById('userName').textContent = userData.name;
+      document.getElementById('userRole').textContent = userData.role;
+    
+      // Admin/Teknik Sorumlu elementlerini göster/gizle
+      const adminElements = document.querySelectorAll('.admin-only');
+      if (userData.role === 'Admin' || userData.role === 'Teknik Sorumlu') {
+        adminElements.forEach(el => el.style.display = 'block');
+      }
+    
+      // Başlangıç sayfasını göster
+      showPage('dashboard-summary');
+      
+      // Event listener'ları ayarla
+      setupEventListeners();
+      
+      // Dashboard verilerini yükle
+      loadDashboardData();
+    }
+    
+    // Dashboard verilerini yükle (optimize edildi)
+    function loadDashboardData() {
+      const userData = JSON.parse(localStorage.getItem('userData'));
+      const cacheKey = `dashboard_counts_${userData.email}`;
+      
+      // Cache'den veri al
+      const cachedCounts = CacheManager.get(cacheKey, CacheManager.CACHE_DURATIONS.DASHBOARD_COUNTS);
+      if (cachedCounts) {
+        updateDashboardCounts(cachedCounts);
+        return;
+      }
+      
+      // Talep sayılarını getir
+      google.script.run
+        .withSuccessHandler(function(counts) {
+          updateDashboardCounts(counts);
+          CacheManager.set(cacheKey, counts);
+        })
+        .withFailureHandler(function(error) {
+          console.error('Dashboard verileri yüklenirken hata:', error);
+        })
+        .getRequestCounts(userData.email);
+    }
+    
+    // Dashboard sayılarını güncelle (DOM manipülasyonunu optimize et)
+    function updateDashboardCounts(counts) {
+      const elements = {
+        'openRequestCount': counts.open,
+        'completedRequestCount': counts.completed,
+        'pendingRequestCount': counts.pending
+      };
+      
+      // Batch DOM update
+      Object.keys(elements).forEach(id => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = elements[id];
+      });
+    }
+    
+    // Event listener'ları ayarla (optimize edildi)
+    function setupEventListeners() {
+      // Menü navigasyonu - event delegation kullan
+      const sidebarNav = document.querySelector('.sidebar-nav');
+      if (sidebarNav) {
+        sidebarNav.addEventListener('click', function(e) {
+          const link = e.target.closest('a');
+          if (!link) return;
+          
+          e.preventDefault();
+          const page = link.dataset.page;
+          
+          // Aktif menü öğesini güncelle (daha hızlı)
+          const currentActive = sidebarNav.querySelector('a.active');
+          if (currentActive) currentActive.classList.remove('active');
+          link.classList.add('active');
+          
+          showPage(page);
+        });
+      }
+    
+      // Yapılacak iş seçimi değiştiğinde (optimize edildi)
+      const yapilacakIsSelect = document.getElementById('yapilacakIs');
+      if (yapilacakIsSelect) {
+        yapilacakIsSelect.addEventListener('change', function() {
+          const value = this.value;
+          const posmSection = document.getElementById('posmSection');
+          const photoUpload = document.getElementById('photoUpload');
+          
+          // Batch DOM updates
+          const updates = [];
+          
+          if (value === 'Montaj' || value === 'Demontaj' || value === 'Bakım') {
+            if (posmSection) updates.push(() => posmSection.style.display = 'block');
+            if (photoUpload) updates.push(() => photoUpload.style.display = 'block');
+            
+            // POSM listesini sadece gerektiğinde yükle
+            if (!window.posmListLoaded) {
+              loadPosmList();
+              window.posmListLoaded = true;
+            }
+            
+            // Label güncellemeleri
+            const posmLabel = document.querySelector('label[for="posmSelect"]');
+            const stockLabel = document.querySelector('#posmSection .form-group:nth-child(2) label');
+            
+            if (posmLabel) {
+              updates.push(() => posmLabel.textContent = value === 'Montaj' ? 'Montaj Yapılacak POSM' : 'Demontaj Yapılacak POSM');
+            }
+            
+            if (stockLabel) {
+              updates.push(() => stockLabel.textContent = value === 'Montaj' ? 'Hazır Stok:' : 'Tamir Bekleyen:');
+            }
+          } else if (value === 'Bakım') {
+            if (posmSection) updates.push(() => posmSection.style.display = 'none');
+            if (photoUpload) updates.push(() => photoUpload.style.display = 'block');
+          } else {
+            if (posmSection) updates.push(() => posmSection.style.display = 'none');
+            if (photoUpload) updates.push(() => photoUpload.style.display = 'none');
+          }
+          
+          // Tüm DOM güncellemelerini batch olarak yap
+          updates.forEach(update => update());
+        });
+      }
+    
+      // POSM seçimi değiştiğinde
+      const posmSelect = document.getElementById('posmSelect');
+      if (posmSelect) {
+        posmSelect.addEventListener('change', function() {
+          const posmAdi = this.value;
+          const yapilacakIs = document.getElementById('yapilacakIs').value;
+          
+          if (posmAdi) {
+            checkPosmStock(posmAdi, yapilacakIs);
+          }
+        });
+      }
+    
+      // Sayfa dışına tıklandığında arama sonuçlarını kapat
+      document.addEventListener('click', function(e) {
+        const searchContainer = document.querySelector('.bayi-search-container');
+        const resultsDiv = document.getElementById('bayiSearchResults');
+        
+        if (searchContainer && resultsDiv && !searchContainer.contains(e.target)) {
+          resultsDiv.classList.remove('active');
+        }
+      });
+    }
+    
+    // Sayfaları göster/gizle
+    function showPage(pageId) {
+      console.log('Showing page:', pageId);
+      
+      // Önce tüm sayfaları gizle
+      document.querySelectorAll('.dashboard-section').forEach(section => {
+        section.style.display = 'none';
+      });
+      
+      // İstenen sayfayı göster
+      const targetPage = document.getElementById(pageId);
+      if (targetPage) {
+        targetPage.style.display = 'block';
+        
+        // Sayfa içeriğini yükle
+        switch(pageId) {
+          case 'dashboard-summary':
+            loadDashboardData();
+            break;
+          case 'new-request-form':
+            document.getElementById('serviceRequestForm').reset();
+            loadNewRequestForm();
+            break;
+          case 'my-requests-list':
+            loadMyRequests();
+            break;
+          case 'all-requests-list':
+            loadAllRequests();
+            break;
+          case 'posm-management':
+            loadPosmManagement();
+            break;
+        }
+    
+        // Aktif menü öğesini güncelle
+        document.querySelectorAll('.nav-menu a').forEach(link => {
+          link.classList.remove('active');
+          if (link.getAttribute('onclick').includes(pageId)) {
+            link.classList.add('active');
+          }
+        });
+      } else {
+        console.error('Page not found:', pageId);
+      }
+    }
+    
+    // POSM listesini yükle (optimize edildi)
+    function loadPosmList() {
+      const cacheKey = 'posm_list_cache';
+      
+      // Cache'den veri al
+      const cachedPosmList = CacheManager.get(cacheKey, CacheManager.CACHE_DURATIONS.POSM_LIST);
+      if (cachedPosmList) {
+        updatePosmSelect(cachedPosmList);
+        return;
+      }
+      
+      google.script.run
+        .withSuccessHandler(function(posmList) {
+          // Cache'e kaydet
+          CacheManager.set(cacheKey, posmList);
+          updatePosmSelect(posmList);
+        })
+        .getPosmList();
+    }
+    
+    // POSM select'i güncelle (DOM manipülasyonunu optimize et)
+    function updatePosmSelect(posmList) {
+      const select = document.getElementById('posmSelect');
+      if (!select) return;
+      
+      // Fragment kullanarak DOM manipülasyonunu optimize et
+      const fragment = document.createDocumentFragment();
+      
+      const defaultOption = document.createElement('option');
+      defaultOption.value = '';
+      defaultOption.textContent = 'Seçiniz';
+      fragment.appendChild(defaultOption);
+      
+      posmList.forEach(posm => {
+        const option = document.createElement('option');
+        option.value = posm.name;
+        option.textContent = posm.name;
+        fragment.appendChild(option);
+      });
+      
+      select.innerHTML = '';
+      select.appendChild(fragment);
+    }
+    
+    // POSM stok kontrolü
+    function checkPosmStock(posmAdi, yapilacakIs) {
+      google.script.run
+        .withSuccessHandler(function(stock) {
+          const stockSpan = document.getElementById('currentStock');
+          if (stock) {
+            if (yapilacakIs === 'Montaj') {
+              if (stock.hazirAdet > 0) {
+                stockSpan.innerHTML = `<div style="color: #27ae60">Hazır Stok: ${stock.hazirAdet}</div>`;
+              } else {
+                stockSpan.innerHTML = '<div style="color: #e74c3c">Stokta hazır POSM yok!</div>';
+              }
+            } else if (yapilacakIs === 'Demontaj') {
+              stockSpan.innerHTML = `<div>Tamir Bekleyen: ${stock.tamirBekleyen}</div>`;
+            }
+          } else {
+            stockSpan.innerHTML = '<div style="color: #e74c3c">Stok bilgisi alınamadı</div>';
+          }
+        })
+        .checkPosmStock(posmAdi);
+    }
+    
+    // Seçilen fotoğrafları önizle
+    function handlePhotoSelect(event) {
+      const files = event.target.files;
+      const selectedPhotosDiv = document.getElementById('selectedPhotos');
+      selectedPhotosDiv.innerHTML = '';
+      
+      Array.from(files).forEach((file, index) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const div = document.createElement('div');
+          div.className = 'photo-preview';
+          div.innerHTML = `<img src="${e.target.result}" alt="Preview"><button class="remove-photo" onclick="removePhoto(${index})">×</button>`;
+          selectedPhotosDiv.appendChild(div);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+    
+    // Fotoğraf kaldır
+    function removePhoto(index) {
+      const input = document.getElementById('photoInput');
+      const files = Array.from(input.files);
+      files.splice(index, 1);
+      
+      // Yeni FileList oluştur
+      const dataTransfer = new DataTransfer();
+      files.forEach(file => dataTransfer.items.add(file));
+      input.files = dataTransfer.files;
+      
+      // Önizlemeleri güncelle
+      handlePhotoSelect({ target: input });
+    }
+    
+    // Fotoğrafları yükle
+    function uploadPhotos(files, requestId) {
+      return new Promise((resolve, reject) => {
+        const progressDiv = document.getElementById('uploadProgress');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const currentFile = document.getElementById('currentFile');
+        
+        progressDiv.style.display = 'block';
+        progressFill.style.width = '0%';
+        progressText.textContent = '0%';
+        
+        const totalFiles = files.length;
+        let uploadedFiles = 0;
+        const uploadedPhotos = [];
+        
+        Array.from(files).forEach((file, index) => {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            const photoData = {
+              name: file.name,
+              content: e.target.result.split(',')[1],
+              mimeType: file.type
+            };
+            
+            google.script.run
+              .withSuccessHandler(function(result) {
+                if (result.success) {
+                  uploadedFiles++;
+                  uploadedPhotos.push(...result.photos);
+                  
+                  // İlerleme çubuğunu güncelle
+                  const progress = Math.round((uploadedFiles / totalFiles) * 100);
+                  progressFill.style.width = `${progress}%`;
+                  progressText.textContent = `${progress}%`;
+                  currentFile.textContent = `Yükleniyor: ${file.name}`;
+                  
+                  if (uploadedFiles === totalFiles) {
+                    setTimeout(() => {
+                      progressDiv.style.display = 'none';
+                      resolve(uploadedPhotos);
+                    }, 1000);
+                  }
+                } else {
+                  reject(result.error);
+                }
+              })
+              .withFailureHandler(function(error) {
+                reject(error);
+              })
+              .uploadPhotos(photoData, requestId);
+          };
+          reader.readAsDataURL(file);
+        });
+      });
+    }
+    
+    // Yeni talep oluşturma fonksiyonunu güncelle
+    async function handleNewRequest(event) {
+      event.preventDefault();
+      
+      const userData = JSON.parse(localStorage.getItem('userData'));
+      if (!userData) {
+        alert('Kullanıcı bilgileri bulunamadı. Lütfen tekrar giriş yapın.');
+        handleLogout();
+        return;
+      }
+      
+      try {
+        // İş detayını al
+        const isDetayi = document.getElementById('yapilacakIsDetay').value || '-';
+        
+        const formData = {
+          territory: document.getElementById('territory').value,
+          bayiKodu: document.getElementById('bayiKodu').value,
+          bayiAdi: document.getElementById('bayiAdi').value,
+          yapilacakIs: document.getElementById('yapilacakIs').value,
+          yapilacakIsDetay: isDetayi, // Q sütununa yazılacak değer
+          istenentarih: document.getElementById('istenentarih').value,
+          posmAdi: document.getElementById('posmSelect').value,
+          userEmail: userData.email,
+          userName: userData.name,
+          durum: 'Beklemede'
+        };
+        
+        if (!formData.territory || !formData.bayiKodu || !formData.yapilacakIs || !formData.istenentarih) {
+          alert('Lütfen zorunlu alanları doldurun.');
+          return;
+        }
+        
+        if ((formData.yapilacakIs === 'Montaj' || formData.yapilacakIs === 'Demontaj') && !formData.posmAdi) {
+          alert('Lütfen POSM seçimi yapın.');
+          return;
+        }
+        
+        const response = await new Promise((resolve, reject) => {
+          google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject)
+            .createServiceRequest(formData);
+        });
+        
+        if (!response.success) {
+          throw new Error(response.error || 'Talep oluşturulurken bir hata oluştu');
+        }
+        
+        const photoInput = document.getElementById('photoInput');
+        if (photoInput.files.length > 0) {
+          await uploadPhotos(photoInput.files, response.requestId);
+        }
+        
+        alert('Talep başarıyla oluşturuldu.');
+        document.getElementById('serviceRequestForm').reset();
+        document.getElementById('selectedPhotos').innerHTML = '';
+        showPage('dashboard-summary');
+        
+      } catch (error) {
+        alert('Bir hata oluştu: ' + error);
+      }
+    }
+    
+    let calendar;
+    
+    // Görünüm değiştirme fonksiyonu
+    function toggleView(view) {
+      const tableView = document.getElementById('requests-table-view');
+      const calendarView = document.getElementById('requests-calendar-view');
+      
+      if (view === 'calendar') {
+        tableView.style.display = 'none';
+        calendarView.style.display = 'block';
+        if (!calendar) {
+          initializeCalendar();
+        }
+      } else {
+        tableView.style.display = 'block';
+        calendarView.style.display = 'none';
+      }
+    }
+    
+    // Tarih formatlama yardımcı fonksiyonu
+    function formatDateOnly(dateStr) {
+      if (!dateStr || dateStr === '-') return '-';
+      
+      try {
+        // Eğer tarih zaten GG.AA.YYYY formatındaysa direkt döndür
+        if (typeof dateStr === 'string' && /^\d{2}\.\d{2}\.\d{4}$/.test(dateStr)) {
+          return dateStr;
+        }
+        
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) {
+          // Eğer nokta ile ayrılmış bir tarihse (GG.AA.YYYY)
+          if (typeof dateStr === 'string' && dateStr.includes('.')) {
+            const parts = dateStr.split('.');
+            if (parts.length === 3) {
+              const day = parts[0].padStart(2, '0');
+              const month = parts[1].padStart(2, '0');
+              const year = parts[2];
+              return `${day}.${month}.${year}`;
+            }
+          }
+          return '-';
+        }
+        
+        const day = date.getDate().toString().padStart(2, '0');
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const year = date.getFullYear();
+        return `${day}.${month}.${year}`;
+      } catch (error) {
+        console.error('Tarih formatlanırken hata:', error);
+        return '-';
+      }
+    }
+    
+    // Tarih parse etme yardımcı fonksiyonu
+    function parseFormattedDate(dateStr) {
+      if (!dateStr) return null;
+      
+      // GG.AA.YYYY formatındaki tarihi parse et
+      const parts = dateStr.split('.');
+      if (parts.length !== 3) return null;
+      
+      const day = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1; // JavaScript'te aylar 0-11 arası
+      const year = parseInt(parts[2], 10);
+      
+      const date = new Date(year, month, day);
+      return date;
+    }
+    
+    // Takvim olaylarını yükle
+    function loadCalendarEvents(successCallback) {
+      const userData = JSON.parse(localStorage.getItem('userData'));
+      const loadingElement = document.getElementById('calendarLoading');
+      
+      if (!userData || !userData.email) {
+        console.error('Kullanıcı bilgileri bulunamadı');
+        return;
+      }
+      
+      const cacheKey = `user_requests_cache_${userData.email}`;
+      
+      // Cache'den veri al
+      const cachedRequests = CacheManager.get(cacheKey, CacheManager.CACHE_DURATIONS.USER_REQUESTS);
+      if (cachedRequests) {
+        const events = processCalendarEvents(cachedRequests);
+        if (typeof successCallback === 'function') {
+          successCallback(events);
+        }
+        return;
+      }
+      
+      // Yükleniyor animasyonunu göster
+      loadingElement.style.display = 'flex';
+      
+      google.script.run
+        .withSuccessHandler(function(requests) {
+          // Cache'e kaydet
+          CacheManager.set(cacheKey, requests);
+          
+          const events = processCalendarEvents(requests);
+          
+          if (typeof successCallback === 'function') {
+            successCallback(events);
+          }
+          
+          // Yükleniyor animasyonunu gizle
+          loadingElement.style.display = 'none';
+        })
+        .withFailureHandler(function(error) {
+          console.error('Takvim olayları yüklenirken hata:', error);
+          loadingElement.style.display = 'none';
+        })
+        .getUserRequests(userData.email);
+    }
+    
+    // Takvim olaylarını işle (optimize edildi)
+    function processCalendarEvents(requests) {
+      if (!Array.isArray(requests)) {
+        console.error('Talepler dizi formatında değil');
+        return [];
+      }
+      
+      return requests.map(request => {
+        if (!request) return null;
+        
+        let className = 'status-beklemede';
+        if (request.durum === 'Tamamlandı') {
+          className = 'status-tamamlandi';
+        } else if (request.planlananTarih) {
+          className = 'status-planlandi';
+        }
+        
+        // Başlığı kısalt
+        let title = request.bayiAdi;
+        if (title.length > 20) {
+          title = title.substring(0, 17) + '...';
+        }
+        
+        // Tarihleri doğru formatta parse et
+        let eventDate;
+        if (request.planlananTarih) {
+          eventDate = parseFormattedDate(request.planlananTarih);
+        }
+        if (!eventDate) {
+          eventDate = new Date(request.talepTarihi);
+        }
+        
+        // Geçerli bir tarih değilse atla
+        if (!eventDate || isNaN(eventDate.getTime())) {
+          console.error('Geçersiz tarih:', request.planlananTarih || request.talepTarihi);
+          return null;
+        }
+        
+        return {
+          id: request.id,
+          title: title,
+          start: eventDate.toISOString().split('T')[0], // YYYY-MM-DD formatına çevir
+          allDay: true,
+          className: className,
+          extendedProps: {
+            bayiAdi: request.bayiAdi,
+            yapilacakIs: request.yapilacakIs,
+            durum: request.durum,
+            talepTarihi: formatDateOnly(request.talepTarihi),
+            planlananTarih: request.planlananTarih
+          }
+        };
+      }).filter(event => event !== null);
+    }
+    
+    // Takvimi başlat
+    function initializeCalendar() {
+      const calendarEl = document.getElementById('calendar');
+      if (!calendarEl) {
+        console.error('Takvim elementi bulunamadı');
+        return;
+      }
+    
+      if (typeof FullCalendar === 'undefined') {
+        console.error('FullCalendar kütüphanesi yüklenemedi');
+        return;
+      }
+    
+      calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        locale: 'tr',
+        height: 'auto',
+        headerToolbar: {
+          left: 'prev,next today',
+          center: 'title',
+          right: 'dayGridMonth,dayGridWeek'
+        },
+        buttonText: {
+          today: 'Bugün',
+          month: 'Ay',
+          week: 'Hafta'
+        },
+        dayMaxEvents: 3,
+        eventClick: function(info) {
+          viewRequestDetails(info.event.id);
+        },
+        eventDidMount: function(info) {
+          const event = info.event;
+          const tooltip = `
+    <div style="text-align: left; line-height: 1.4;">
+    <strong>${event.extendedProps.bayiAdi}</strong><br>
+    <small>
+    ${event.extendedProps.yapilacakIs}<br>
+    Talep: ${event.extendedProps.talepTarihi}<br>
+    Plan: ${event.extendedProps.planlananTarih || '<span class="planlama-bekliyor">Planlama Bekleniyor</span>'}<br>
+    Durum: ${event.extendedProps.durum}
+    </small>
+    </div>`;
+          
+          $(info.el).tooltip({
+            title: tooltip,
+            placement: 'top',
+            trigger: 'hover',
+            container: 'body',
+            html: true,
+            template: '<div class="tooltip" role="tooltip"><div class="tooltip-inner"></div></div>'
+          });
+        },
+        moreLinkContent: function(args) {
+          return '+' + args.num + ' talep';
+        },
+        eventTimeFormat: {
+          hour: '2-digit',
+          minute: '2-digit',
+          meridiem: false,
+          hour12: false
+        }
+      });
+      
+      loadCalendarEvents(events => {
+        calendar.removeAllEvents();
+        calendar.addEventSource(events);
+        calendar.render();
+      });
+    }
+    
+    // Mevcut loadMyRequests fonksiyonunu güncelle
+    function loadMyRequests() {
+      console.log('loadMyRequests başladı');
+      const userData = JSON.parse(localStorage.getItem('userData'));
+      
+      if (!userData || !userData.email) {
+        console.error('Kullanıcı bilgileri bulunamadı');
+        handleLogout();
+        return;
+      }
+      
+      // Tablo görünümünü yükle
+      loadTableView();
+      
+      // Takvim görünümünü başlat
+      if (document.getElementById('requests-calendar-view').style.display === 'block') {
+        initializeCalendar();
+      }
+    }
+    
+    // POSM stok bilgilerini al
+    function getPosmStockInfo(posmAdi) {
+      return new Promise((resolve) => {
+        google.script.run
+          .withSuccessHandler(function(stock) {
+            if (stock) {
+              resolve(stock);
+            } else {
+              resolve({ hazirAdet: 0, tamirBekleyen: 0 });
+            }
+          })
+          .checkPosmStock(posmAdi);
+      });
+    }
+    
+    // Tablo görünümünü yükle (optimize edildi)
+    function loadTableView() {
+      const tbody = document.getElementById('myRequestsTableBody');
+      const loadingElement = document.getElementById('myRequestsLoading');
+      
+      if (!tbody) {
+        console.error('myRequestsTableBody elementi bulunamadı');
+        return;
+      }
+      
+      const userData = JSON.parse(localStorage.getItem('userData'));
+      const cacheKey = `user_requests_cache_${userData.email}`;
+      
+      // Cache'den veri al
+      const cachedRequests = CacheManager.get(cacheKey, CacheManager.CACHE_DURATIONS.USER_REQUESTS);
+      if (cachedRequests) {
+        renderUserRequests(tbody, cachedRequests, loadingElement);
+        return;
+      }
+      
+      loadingElement.style.display = 'flex';
+      
+      google.script.run
+        .withSuccessHandler(function(requests) {
+          // Cache'e kaydet
+          CacheManager.set(cacheKey, requests);
+          renderUserRequests(tbody, requests, loadingElement);
+        })
+        .withFailureHandler(function(error) {
+          console.error('Talep yükleme hatası:', error);
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="7" style="text-align: center; color: red;">
+                Talepler yüklenirken bir hata oluştu: ${error}
+              </td>
+            </tr>
+          `;
+          loadingElement.style.display = 'none';
+        })
+        .getUserRequests(userData.email);
+    }
+    
+    // Kullanıcı taleplerini render et (optimize edildi)
+    function renderUserRequests(tbody, requests, loadingElement) {
+      if (!Array.isArray(requests)) {
+        console.error('Talepler dizi formatında değil');
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" style="text-align: center; color: red;">
+              Talepler alınamadı. Lütfen sayfayı yenileyin.
+            </td>
+          </tr>
+        `;
+        loadingElement.style.display = 'none';
+        return;
+      }
+      
+      if (requests.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" style="text-align: center;">Henüz talep bulunmuyor</td>
+          </tr>
+        `;
+        loadingElement.style.display = 'none';
+        return;
+      }
+      
+      // Fragment kullanarak DOM manipülasyonunu optimize et
+      const fragment = document.createDocumentFragment();
+      
+      // Batch olarak POSM stok bilgilerini al
+      const posmNames = [...new Set(requests.map(req => req?.posmAdi).filter(Boolean))];
+      const stockPromises = posmNames.map(name => 
+        getPosmStockInfo(name).then(stock => ({ name, stock }))
+      );
+      
+      Promise.all(stockPromises).then(stockData => {
+        const stockMap = new Map(stockData.map(item => [item.name, item.stock]));
+        
+        requests.forEach(request => {
+          if (!request) return;
+          
+          const tr = document.createElement('tr');
+          
+          let posmInfo = '-';
+          if (request.posmAdi) {
+            const stock = stockMap.get(request.posmAdi) || { hazirAdet: 0, tamirBekleyen: 0 };
+            posmInfo = `<span class="posm-info" data-toggle="tooltip" data-html="true" title="Hazır Adet: ${stock.hazirAdet}<br>Tamir Bekleyen: ${stock.tamirBekleyen}">${request.posmAdi}</span>`;
+          }
+          
+          const planlananTarihText = request.planlananTarih ? 
+            formatDateOnly(request.planlananTarih) : 
+            '<span class="planlama-bekliyor">Planlama Bekleniyor</span>';
+          
+          tr.innerHTML = `
+            <td data-label="Talep Tarihi">${formatDateOnly(request.talepTarihi) || '-'}</td>
+            <td data-label="Planlanan Tarih">${planlananTarihText}</td>
+            <td data-label="Bayi Adı">${request.bayiAdi || '-'}</td>
+            <td data-label="Yapılacak İş">${request.yapilacakIs || '-'}</td>
+            <td data-label="POSM Adı">${posmInfo}</td>
+            <td data-label="Durum">${getDurumBadge(request.durum || 'Beklemede')}</td>
+            <td data-label="İşlemler">
+              <div class="btn-container">
+                <button onclick="viewRequestDetails(${request.id})" class="btn-detail">
+                  <i class="fas fa-search"></i>Detay
+                </button>
+              </div>
+            </td>
+          `;
+          
+          fragment.appendChild(tr);
+        });
+        
+        tbody.innerHTML = '';
+        tbody.appendChild(fragment);
+        
+        // Tooltip'leri etkinleştir
+        $('[data-toggle="tooltip"]').tooltip({
+          placement: 'top',
+          trigger: 'hover',
+          html: true
+        });
+        
+        loadingElement.style.display = 'none';
+      }).catch(error => {
+        console.error('Stok bilgileri alınırken hata:', error);
+        loadingElement.style.display = 'none';
+      });
+    }
+    
+    // Tüm talepleri yükle (Admin) - optimize edildi
+    function loadAllRequests() {
+      console.log('loadAllRequests başladı');
+      
+      const cacheKey = 'all_requests_cache';
+      const tbody = document.getElementById('allRequestsTableBody');
+      const loadingElement = document.getElementById('allRequestsLoading');
+      
+      if (!tbody) {
+        console.error('allRequestsTableBody elementi bulunamadı');
+        return;
+      }
+      
+      // Cache'den veri al
+      const cachedRequests = CacheManager.get(cacheKey, CacheManager.CACHE_DURATIONS.ALL_REQUESTS);
+      if (cachedRequests) {
+        window.allRequests = cachedRequests;
+        createOptimizedFilterSection();
+        applyFiltersAndDisplay(cachedRequests);
+        return;
+      }
+      
+      createOptimizedFilterSection();
+      loadingElement.style.display = 'flex';
+      
+      google.script.run
+        .withSuccessHandler(async function(requests) {
+          if (!Array.isArray(requests)) {
+            console.error('Talepler dizi formatında değil');
+            tbody.innerHTML = `
+              <tr>
+                <td colspan="10" style="text-align: center; color: red;">
+                  Talepler alınamadı. Lütfen sayfayı yenileyin.
+                </td>
+              </tr>
+            `;
+            loadingElement.style.display = 'none';
+            return;
+          }
+          
+          // Cache'e kaydet
+          CacheManager.set(cacheKey, requests);
+          
+          // Talepleri global değişkende sakla
+          window.allRequests = requests;
+          
+          // Filtreleri uygula ve görüntüle
+          applyFiltersAndDisplay(requests);
+          
+          loadingElement.style.display = 'none';
+        })
+        .withFailureHandler(function(error) {
+          console.error('Tüm talepleri yükleme hatası:', error);
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="10" style="text-align: center; color: red;">
+                Talepler yüklenirken bir hata oluştu: ${error}
+              </td>
+            </tr>
+          `;
+          loadingElement.style.display = 'none';
+        })
+        .getAllRequests();
+    }
+    
+    // Optimize edilmiş filtre bölümü oluşturma
+    function createOptimizedFilterSection() {
+      const existingFilterSection = document.querySelector('#all-requests-list .filter-section');
+      if (existingFilterSection) return;
+      
+      const tableContainer = document.querySelector('#all-requests-list .table-container');
+      if (!tableContainer) return;
+      
+      const fragment = document.createDocumentFragment();
+      const filterSection = document.createElement('div');
+      filterSection.className = 'filter-section';
+      
+      const filterContainer = document.createElement('div');
+      filterContainer.className = 'filter-container';
+      
+      filterContainer.innerHTML = `
+        <div class="filter-group">
+          <label for="statusFilter">Durum Filtresi:</label>
+          <select id="statusFilter" onchange="filterRequests()">
+            <option value="">Tümü</option>
+            <option value="Beklemede">Beklemede</option>
+            <option value="Planlandi">Planlandı</option>
+            <option value="Tamamlandi">Tamamlandı</option>
+            <option value="Iptal">İptal</option>
+          </select>
+        </div>
+        <button id="planlamaBekleyenBtn" class="filter-button" onclick="filterPlanlamaBekleyen()">
+          <i class="fas fa-clock"></i> Planlama Bekleyen İşler
+        </button>
+      `;
+      
+      filterSection.appendChild(filterContainer);
+      fragment.appendChild(filterSection);
+      tableContainer.insertBefore(fragment, tableContainer.firstChild);
+    }
+    
+    // Filtreleri uygula ve görüntüle
+    function applyFiltersAndDisplay(requests) {
+      const statusFilter = document.getElementById('statusFilter');
+      const planlamaBekleyenBtn = document.getElementById('planlamaBekleyenBtn');
+      
+      let filteredRequests = requests;
+      
+      // Mevcut filtre durumlarını uygula
+      if (statusFilter && statusFilter.value) {
+        filteredRequests = filteredRequests.filter(request => {
+          return request.durum.toLowerCase() === statusFilter.value.toLowerCase();
+        });
+      }
+      
+      if (planlamaBekleyenBtn && planlamaBekleyenBtn.classList.contains('active')) {
+        filteredRequests = filteredRequests.filter(request => {
+          return !request.planlananTarih && request.durum !== 'Tamamlandı' && request.durum !== 'İptal';
+        });
+      }
+      
+      // Filtrelenmiş talepleri görüntüle
+      displayFilteredRequests(filteredRequests);
+    }
+          `;
+          loadingElement.style.display = 'none';
+        })
+        .getAllRequests();
+    }
+    
+    // Filtreleme fonksiyonu
+    function filterRequests() {
+      const statusFilter = document.getElementById('statusFilter').value;
+      let filteredRequests = window.allRequests;
+      
+      if (statusFilter) {
+        filteredRequests = filteredRequests.filter(request => {
+          return request.durum.toLowerCase() === statusFilter.toLowerCase();
+        });
+      }
+      
+      displayFilteredRequests(filteredRequests);
+    }
+    
+    // Planlama Bekleyen İşleri Filtrele
+    function filterPlanlamaBekleyen() {
+      const btn = document.getElementById('planlamaBekleyenBtn');
+      if (!btn) {
+        console.error('Planlama bekleyen işler butonu bulunamadı');
+        return;
+      }
+    
+      // Butonun aktif durumunu değiştir
+      btn.classList.toggle('active');
+      
+      // Global değişkenden talepleri al
+      let filteredRequests = window.allRequests;
+      if (!Array.isArray(filteredRequests)) {
+        console.error('Talepler dizisi bulunamadı');
+        return;
+      }
+      
+      // Eğer buton aktifse filtrelemeyi uygula
+      if (btn.classList.contains('active')) {
+        filteredRequests = filteredRequests.filter(request => {
+          if (!request) return false;
+          return !request.planlananTarih && 
+                 request.durum.toLowerCase() !== 'tamamlandı' && 
+                 request.durum.toLowerCase() !== 'iptal';
+        });
+        
+        // Butonun stilini güncelle
+        btn.style.background = 'linear-gradient(135deg, #27ae60, #219a52)';
+      } else {
+        // Butonun stilini normale döndür
+        btn.style.background = 'linear-gradient(135deg, #3498db, #2980b9)';
+      }
+      
+      // Filtrelenmiş sonuçları görüntüle
+      displayFilteredRequests(filteredRequests);
+    }
+    
+    // Filtrelenmiş talepleri görüntüle (optimize edildi)
+    function displayFilteredRequests(requests) {
+      const tbody = document.getElementById('allRequestsTableBody');
+      if (!tbody) {
+        console.error('Tablo gövdesi bulunamadı');
+        return;
+      }
+      
+      if (!Array.isArray(requests) || requests.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center;">Filtrelenen kriterlere uygun talep bulunamadı</td></tr>`;
+        return;
+      }
+      
+      // Fragment kullanarak DOM manipülasyonunu optimize et
+      const fragment = document.createDocumentFragment();
+      
+      // Batch olarak POSM stok bilgilerini al
+      const posmNames = [...new Set(requests.map(req => req?.posmAdi).filter(Boolean))];
+      const stockPromises = posmNames.map(name => 
+        getPosmStockInfo(name).then(stock => ({ name, stock }))
+      );
+      
+      Promise.all(stockPromises).then(stockData => {
+        const stockMap = new Map(stockData.map(item => [item.name, item.stock]));
+        
+        requests.forEach(request => {
+          if (!request) return;
+          
+          const tr = document.createElement('tr');
+          
+          let posmInfo = '-';
+          if (request.posmAdi) {
+            const stock = stockMap.get(request.posmAdi) || { hazirAdet: 0, tamirBekleyen: 0 };
+            posmInfo = `<span class="posm-info" data-toggle="tooltip" data-html="true" title="Hazır Adet: ${stock.hazirAdet}<br>Tamir Bekleyen: ${stock.tamirBekleyen}">${request.posmAdi}</span>`;
+          }
+          
+          const planlananTarihText = request.planlananTarih ? 
+            formatDateOnly(request.planlananTarih) : 
+            '<span class="planlama-bekliyor">Planlama Bekleniyor</span>';
+          
+          tr.innerHTML = `<td data-label="Talep Tarihi">${formatDateOnly(request.talepTarihi) || '-'}</td><td data-label="Planlanan Tarih">${planlananTarihText}</td><td data-label="Kullanıcı">${request.kullanici || 'Bilinmiyor'}</td><td data-label="Territory">${request.territory || '-'}</td><td data-label="Bayi Kodu">${request.bayiKodu || '-'}</td><td data-label="Bayi Adı">${request.bayiAdi || '-'}</td><td data-label="Yapılacak İş">${request.yapilacakIs || '-'}</td><td data-label="POSM Adı">${posmInfo}</td><td data-label="Durum">${getDurumBadge(request.durum || 'Beklemede')}</td><td data-label="İşlemler"><div class="btn-container"><button onclick="viewRequestDetails(${request.id})" class="btn-detail"><i class="fas fa-search"></i>Detay</button>${getExtraButtons(request)}</div></td>`;
+          
+          fragment.appendChild(tr);
+        });
+        
+        tbody.innerHTML = '';
+        tbody.appendChild(fragment);
+        
+        // Tooltip'leri yenile
+        $('[data-toggle="tooltip"]').tooltip({
+          placement: 'top',
+          trigger: 'hover',
+          html: true
+        });
+      }).catch(error => {
+        console.error('Stok bilgileri alınırken hata:', error);
+      });
+    }
+    
+    // Extra butonları oluştur
+    function getExtraButtons(request) {
+      const userData = JSON.parse(localStorage.getItem('userData'));
+      if (userData.role !== 'Admin' && userData.role !== 'Teknik Sorumlu') return '';
+      
+      const isCompleted = request.durum === 'Tamamlandı';
+      const calendarButtonText = request.planlananTarih ? 'Takvimi Güncelle' : 'Takvime Ekle';
+      
+      return `<button onclick="updateRequestStatus(${request.id})" class="btn-update ${isCompleted ? 'disabled' : ''}" ${isCompleted ? 'disabled' : ''}><i class="fas fa-edit"></i>Güncelle</button><button onclick="addToCalendar(${request.id})" class="btn-calendar ${isCompleted ? 'disabled' : ''}" ${isCompleted ? 'disabled' : ''}><i class="fas fa-calendar-plus"></i>${calendarButtonText}</button>`;
+    }
+    
+    // Filtre stilleri
+    const filterStyles = document.createElement('style');
+    filterStyles.textContent = `
+      .filter-section {
+        margin-bottom: 20px;
+        background: white;
+        padding: 16px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+    
+      .filter-container {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+    
+      .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+    
+      .filter-group label {
+        font-weight: 500;
+        color: #2c3e50;
+      }
+    
+      .filter-group select {
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-size: 14px;
+        color: #2c3e50;
+        background-color: white;
+        min-width: 150px;
+      }
+    
+      .filter-button {
+        padding: 8px 16px;
+        background: linear-gradient(135deg, #3498db, #2980b9);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+    
+      .filter-button:hover {
+        background: linear-gradient(135deg, #2980b9, #2573a7);
+      }
+    
+      .filter-button.active {
+        background: linear-gradient(135deg, #27ae60, #219a52);
+      }
+    
+      .filter-button i {
+        font-size: 16px;
+      }
+    
+      @media screen and (max-width: 768px) {
+        .filter-container {
+          flex-direction: column;
+          align-items: stretch;
+        }
+    
+        .filter-group {
+          flex-direction: column;
+          align-items: stretch;
+        }
+    
+        .filter-button {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+    `;
+    
+    document.head.appendChild(filterStyles);
+    
+    // Takvime Ekle modalını göster
+    function addToCalendar(requestId) {
+      console.log('Takvime ekleniyor:', requestId);
+      
+      // Mevcut planlanan tarihi al
+      google.script.run
+        .withSuccessHandler(function(request) {
+          if (!request) {
+            alert('Talep bilgileri alınamadı');
+            return;
+          }
+          
+          const modal = document.createElement('div');
+          modal.className = 'modal';
+          modal.innerHTML = `
+            <div class="modal-content">
+              <div class="modal-header">
+                <h2>${request.planlananTarih ? 'Planlanan Tarihi Güncelle' : 'Planlanan Tarih Ekle'}</h2>
+                <span class="close" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</span>
+              </div>
+              <div class="modal-body">
+                <form id="addToCalendarForm" onsubmit="submitCalendarDate(event, ${requestId})">
+                  <div class="form-group">
+                    <label for="planlananTarih">Planlanan Tarih:</label>
+                    <input type="date" id="planlananTarih" required 
+                           value="${request.planlananTarih ? formatDateForInput(request.planlananTarih) : ''}">
+                  </div>
+                  <div class="form-group">
+                    <button type="submit" class="btn-primary">
+                      ${request.planlananTarih ? 'Güncelle' : 'Kaydet'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          `;
+          
+          document.body.appendChild(modal);
+        })
+        .withFailureHandler(function(error) {
+          alert('Talep bilgileri alınamadı: ' + error);
+        })
+        .getRequestDetails(requestId);
+    }
+    
+    // Tarih input formatına çevir (YYYY-MM-DD)
+    function formatDateForInput(dateStr) {
+      if (!dateStr) return '';
+      const parts = dateStr.split('.');
+      if (parts.length !== 3) return '';
+      return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+    
+    // Durum badge'i oluştur
+    function getDurumBadge(durum) {
+      let color;
+      switch (durum.toLowerCase()) {
+        case 'tamamlandı':
+          color = '#27ae60';
+          break;
+        case 'beklemede':
+          color = '#f39c12';
+          break;
+        case 'iptal':
+          color = '#e74c3c';
+          break;
+        case 'takvime eklendi':
+          color = '#3498db';
+          break;
+        default:
+          color = '#95a5a6';
+      }
+      
+      return `<span style="background-color: ${color}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">${durum}</span>`;
+    }
+    
+    // POSM yönetimi sayfasını yükle - optimize edildi
+    function loadPosmManagement() {
+      const container = document.getElementById('posm-management');
+      const cacheKey = 'posm_management_cache';
+      
+      // Cache'den veri al
+      const cachedPosmList = CacheManager.get(cacheKey, CacheManager.CACHE_DURATIONS.POSM_MANAGEMENT);
+      if (cachedPosmList) {
+        renderPosmManagement(container, cachedPosmList);
+        return;
+      }
+      
+      const loadingElement = document.createElement('div');
+      loadingElement.className = 'loading-overlay';
+      loadingElement.innerHTML = `
+        <div class="loading-container">
+          <div class="loading-text">Yükleniyor</div>
+        </div>
+      `;
+      container.appendChild(loadingElement);
+    
+      google.script.run
+        .withSuccessHandler(function(posmList) {
+          loadingElement.remove();
+          
+          // Cache'e kaydet
+          CacheManager.set(cacheKey, posmList);
+          
+          renderPosmManagement(container, posmList);
+        })
+        .withFailureHandler(function(error) {
+          loadingElement.remove();
+          container.innerHTML = `
+            <div class="error-message">
+              <h3>POSM verileri yüklenirken hata oluştu</h3>
+              <p>${error}</p>
+              <button onclick="loadPosmManagement()" class="retry-btn">Tekrar Dene</button>
+            </div>
+          `;
+        })
+        .getPosmList();
+    }
+    
+    // POSM yönetimi render fonksiyonu
+    function renderPosmManagement(container, posmList) {
+      const fragment = document.createDocumentFragment();
+      
+      // Header oluştur
+      const header = document.createElement('div');
+      header.className = 'posm-header';
+      header.innerHTML = `
+        <h2>POSM Yönetimi</h2>
+        <button class="add-posm-btn" onclick="showAddPosmModal()">
+          <i class="fas fa-plus"></i> Yeni POSM Ekle
+        </button>
+      `;
+      
+      // Grid oluştur
+      const grid = document.createElement('div');
+      grid.className = 'posm-grid';
+      
+      // POSM kartlarını oluştur
+      posmList.forEach(posm => {
+        const card = document.createElement('div');
+        card.className = 'posm-card';
+        card.innerHTML = `
+          <div class="posm-card-header">
+            <h3>${posm.name}</h3>
+            <div class="posm-actions">
+              <button class="edit-btn" onclick="editPosm('${posm.name}')" title="Düzenle">
+                <i class="fas fa-edit"></i>
+                <span class="btn-text">Düzenle</span>
+              </button>
+              <button class="delete-btn" onclick="deletePosm('${posm.name}')" title="Sil">
+                <i class="fas fa-trash"></i>
+                <span class="btn-text">Sil</span>
+              </button>
+            </div>
+          </div>
+          <div class="posm-stats">
+            <div class="stat-item">
+              <div class="stat-label">Hazır Adet</div>
+              <div class="stat-value ${posm.hazirAdet > 0 ? 'positive' : 'negative'}">
+                ${posm.hazirAdet}
+              </div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Tamir Bekleyen</div>
+              <div class="stat-value ${posm.tamirBekleyen > 0 ? 'warning' : ''}">
+                ${posm.tamirBekleyen}
+              </div>
+            </div>
+          </div>
+          <div class="posm-actions-footer">
+            <button class="stock-update-btn" onclick="updateStock('${posm.name}')">
+              <i class="fas fa-boxes"></i> Stok Güncelle
+            </button>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+      
+      fragment.appendChild(header);
+      fragment.appendChild(grid);
+      
+      container.innerHTML = '';
+      container.appendChild(fragment);
+      
+      // Stilleri ekle (sadece bir kez)
+      if (!document.getElementById('posm-management-styles')) {
+        const posmStyles = document.createElement('style');
+        posmStyles.id = 'posm-management-styles';
+        posmStyles.textContent = `
+            .posm-header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 24px;
+              padding: 16px;
+              background: white;
+              border-radius: 12px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+    
+            .posm-header h2 {
+              margin: 0;
+              color: #2c3e50;
+              font-size: 1.5rem;
+              font-weight: 600;
+            }
+    
+            .add-posm-btn {
+              background: linear-gradient(135deg, #27ae60, #219a52);
+              color: white;
+              border: none;
+              padding: 10px 20px;
+              border-radius: 8px;
+              font-size: 14px;
+              font-weight: 500;
+              cursor: pointer;
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              transition: all 0.3s ease;
+            }
+    
+            .add-posm-btn:hover {
+              background: linear-gradient(135deg, #219a52, #1e8449);
+              transform: translateY(-1px);
+              box-shadow: 0 4px 8px rgba(39, 174, 96, 0.3);
+            }
+    
+            .posm-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+              gap: 20px;
+              padding: 0 8px;
+            }
+    
+            .posm-card {
+              background: white;
+              border-radius: 12px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+              transition: transform 0.3s ease, box-shadow 0.3s ease;
+              overflow: hidden;
+            }
+    
+            .posm-card:hover {
+              transform: translateY(-4px);
+              box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            }
+    
+            .posm-card-header {
+              padding: 16px;
+              background: linear-gradient(135deg, #3498db, #2980b9);
+              color: white;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+            }
+    
+            .posm-card-header h3 {
+              margin: 0;
+              font-size: 1.2rem;
+              font-weight: 500;
+            }
+    
+            .posm-actions {
+              display: flex;
+              gap: 8px;
+            }
+    
+            .posm-actions button {
+              background: rgba(255,255,255,0.2);
+              border: none;
+              padding: 8px 12px;
+              border-radius: 6px;
+              color: white;
+              cursor: pointer;
+              display: flex;
+              align-items: center;
+              gap: 6px;
+              transition: all 0.3s ease;
+            }
+    
+            .posm-actions button:hover {
+              background: rgba(255,255,255,0.3);
+              transform: scale(1.05);
+            }
+    
+            .edit-btn:hover {
+              background: #f39c12 !important;
+            }
+    
+            .delete-btn:hover {
+              background: #e74c3c !important;
+            }
+    
+            .btn-text {
+              font-size: 14px;
+              font-weight: 500;
+            }
+    
+            .posm-stats {
+              padding: 20px;
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 16px;
+            }
+    
+            .stat-item {
+              text-align: center;
+              padding: 12px;
+              background: #f8f9fa;
+              border-radius: 8px;
+            }
+    
+            .stat-label {
+              font-size: 0.9rem;
+              color: #6c757d;
+              margin-bottom: 8px;
+            }
+    
+            .stat-value {
+              font-size: 1.5rem;
+              font-weight: 600;
+              color: #2c3e50;
+            }
+    
+            .stat-value.positive {
+              color: #27ae60;
+            }
+    
+            .stat-value.negative {
+              color: #e74c3c;
+            }
+    
+            .stat-value.warning {
+              color: #f39c12;
+            }
+    
+            .posm-actions-footer {
+              padding: 16px;
+              border-top: 1px solid #eee;
+            }
+    
+            .stock-update-btn {
+              width: 100%;
+              padding: 10px;
+              background: linear-gradient(135deg, #3498db, #2980b9);
+              color: white;
+              border: none;
+              border-radius: 6px;
+              font-size: 14px;
+              font-weight: 500;
+              cursor: pointer;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              gap: 8px;
+              transition: all 0.3s ease;
+            }
+    
+            .stock-update-btn:hover {
+              background: linear-gradient(135deg, #2980b9, #2573a7);
+              transform: translateY(-1px);
+            }
+    
+            @media screen and (max-width: 768px) {
+              .btn-text {
+                display: none;
+              }
+    
+              .posm-actions button {
+                padding: 8px;
+              }
+            }
+          `;
+          document.head.appendChild(posmStyles);
+        })
+        .withFailureHandler(function(error) {
+          loadingElement.remove();
+          container.innerHTML = `
+            <div class="error-message">
+              <i class="fas fa-exclamation-circle"></i>
+              <p>POSM listesi yüklenirken bir hata oluştu: ${error}</p>
+            </div>
+          `;
+        })
+        .getPosmList();
+    }
+    
+    // POSM Ekleme modalını göster
+    function showAddPosmModal() {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Yeni POSM Ekle</h3>
+            <span class="close-button" onclick="this.closest('.modal').remove()">&times;</span>
+          </div>
+          <div class="modal-body">
+            <form id="addPosmForm" onsubmit="submitNewPosm(event)">
+              <div class="form-group">
+                <label for="posmName">POSM Adı</label>
+                <input type="text" id="posmName" required>
+              </div>
+              <div class="form-group">
+                <label for="hazirAdet">Hazır Adet</label>
+                <input type="number" id="hazirAdet" min="0" required>
+              </div>
+              <div class="form-group">
+                <label for="tamirBekleyen">Tamir Bekleyen</label>
+                <input type="number" id="tamirBekleyen" min="0" required>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="submit-btn">
+                  <i class="fas fa-save"></i> Kaydet
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+    }
+    
+    // Stok güncelleme modalını göster
+    function updateStock(posmName) {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Stok Güncelle - ${posmName}</h3>
+            <span class="close-button" onclick="this.closest('.modal').remove()">&times;</span>
+          </div>
+          <div class="modal-body">
+            <form id="updateStockForm" onsubmit="submitStockUpdate(event, '${posmName}')">
+              <div class="form-group">
+                <label for="newHazirAdet">Hazır Adet</label>
+                <input type="number" id="newHazirAdet" min="0" required>
+              </div>
+              <div class="form-group">
+                <label for="newTamirBekleyen">Tamir Bekleyen</label>
+                <input type="number" id="newTamirBekleyen" min="0" required>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="submit-btn">
+                  <i class="fas fa-save"></i> Güncelle
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+      
+      // Mevcut değerleri yükle
+      google.script.run
+        .withSuccessHandler(function(posm) {
+          if (posm) {
+            document.getElementById('newHazirAdet').value = posm.hazirAdet;
+            document.getElementById('newTamirBekleyen').value = posm.tamirBekleyen;
+          }
+        })
+        .getPosmDetails(posmName);
+    }
+    
+    // Çıkış yap
+    function handleLogout() {
+      if (confirm('Çıkış yapmak istediğinizden emin misiniz?')) {
+        localStorage.clear(); // Tüm local storage'ı temizle
+        google.script.run
+          .withSuccessHandler(function(url) {
+            window.top.location.href = url + '?page=login';
+          })
+          .getScriptUrl();
+      }
+    }
+    
+    // Territory listesini yükle
+    function loadTerritoryList() {
+      google.script.run
+        .withSuccessHandler(function(territories) {
+          const select = document.getElementById('territory');
+          select.innerHTML = '<option value="">Territory Seçiniz</option>';
+          territories.forEach(territory => {
+            select.innerHTML += `<option value="${territory}">${territory}</option>`;
+          });
+        })
+        .getTerritoryList();
+    }
+    
+    // Territory değiştiğinde
+    function handleTerritoryChange() {
+      const territory = document.getElementById('territory').value;
+      const bayiSearch = document.getElementById('bayiSearch');
+      
+      // Territory seçilmediyse arama alanını devre dışı bırak
+      bayiSearch.disabled = !territory;
+      bayiSearch.value = '';
+      
+      // Seçili bayiyi temizle
+      document.getElementById('bayiKodu').value = '';
+      document.getElementById('bayiAdi').value = '';
+      
+      // Arama sonuçlarını temizle
+      const resultsDiv = document.getElementById('bayiSearchResults');
+      resultsDiv.innerHTML = '';
+      resultsDiv.classList.remove('active');
+    }
+    
+    // Bayi araması
+    let searchTimeout;
+    function handleBayiSearch() {
+      const searchTerm = document.getElementById('bayiSearch').value;
+      const territory = document.getElementById('territory').value;
+      const resultsDiv = document.getElementById('bayiSearchResults');
+      
+      // Minimum 2 karakter girilmeden arama yapma
+      if (searchTerm.length < 2) {
+        resultsDiv.innerHTML = '';
+        resultsDiv.classList.remove('active');
+        return;
+      }
+      
+      // Ardarda aramaları önlemek için timeout kullan
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        google.script.run
+          .withSuccessHandler(function(results) {
+            resultsDiv.innerHTML = '';
+            
+            if (results.length === 0) {
+              resultsDiv.innerHTML = '<div class="bayi-search-item">Sonuç bulunamadı</div>';
+            } else {
+              results.forEach(bayi => {
+                const div = document.createElement('div');
+                div.className = 'bayi-search-item';
+                div.innerHTML = `${bayi.bayiKodu} - ${bayi.bayiAdi}`;
+                div.onclick = () => selectBayi(bayi);
+                resultsDiv.appendChild(div);
+              });
+            }
+            
+            resultsDiv.classList.add('active');
+          })
+          .searchBayiler(territory, searchTerm);
+      }, 300);
+    }
+    
+    // Bayi seçildiğinde
+    function selectBayi(bayi) {
+      document.getElementById('bayiKodu').value = bayi.bayiKodu;
+      document.getElementById('bayiAdi').value = bayi.bayiAdi;
+      
+      // Arama sonuçlarını temizle
+      const resultsDiv = document.getElementById('bayiSearchResults');
+      resultsDiv.innerHTML = '';
+      resultsDiv.classList.remove('active');
+      
+      // Arama alanını temizle
+      document.getElementById('bayiSearch').value = '';
+    }
+    
+    // Yeni talep formunu yüklerken
+    function loadNewRequestForm() {
+      loadTerritoryList();
+      document.getElementById('bayiSearch').disabled = true;
+    }
+    
+    // Talep detaylarını görüntüle
+    function viewRequestDetails(requestId) {
+      console.log('Talep detayları görüntüleniyor:', requestId);
+      const loadingElement = document.getElementById('myRequestsLoading');
+      
+      loadingElement.style.display = 'flex';
+      
+      google.script.run
+        .withSuccessHandler(function(requestDetails) {
+          loadingElement.style.display = 'none';
+          
+          if (!requestDetails) {
+            alert('Talep detayları bulunamadı');
+            return;
+          }
+          
+          const modal = document.createElement('div');
+          modal.className = 'modal';
+          
+          const statusClass = requestDetails.durum.toLowerCase().replace(/\s+/g, '-');
+          
+          const mapLink = requestDetails.latitude && requestDetails.longitude ? 
+            `<div class="map-container">
+              <a href="https://www.google.com/maps?q=${requestDetails.latitude},${requestDetails.longitude}" 
+                 target="_blank" class="map-link">
+                <i class="fas fa-map-marker-alt"></i> Haritada Göster
+              </a>
+              <button onclick="printRequestDetails(${JSON.stringify(requestDetails).replace(/"/g, '&quot;')})" class="print-link">
+                <i class="fas fa-print"></i> Yazdır
+              </button>
+            </div>` : '';
+    
+          // Fotoğraf galerisi bölümünü düzenle
+          const photoGalleryHtml = requestDetails.photos && requestDetails.photos.length > 0 ? `
+            <div class="photo-gallery">
+              ${requestDetails.photos.map(photo => {
+                const photoUrl = photo.url.replace('&export=download', '');
+                return `<div class="photo-item"><a href="${photoUrl}" target="_blank" class="photo-link"><img src="${photoUrl}" alt="Fotoğraf" loading="lazy" onerror="this.onerror=null; this.src='https://via.placeholder.com/150?text=Foto%C4%9Fraf+Y%C3%BCklenemedi';"><div class="photo-overlay"><i class="fas fa-search-plus"></i></div></a></div>`;
+              }).join('')}
+            </div>
+          ` : '<div class="no-photos">Henüz fotoğraf yüklenmemiş</div>';
+          
+          modal.innerHTML = `
+            <div class="modal-content modal-content-wide">
+              <div class="modal-header">
+                <h3>Talep Detayları - ${requestDetails.bayiAdi}</h3>
+                <span class="close-button" onclick="this.closest('.modal').remove()">&times;</span>
+              </div>
+              <div class="modal-body">
+                <div class="modal-grid">
+                  <div class="details-section">
+                    <div class="detail-group">
+                      <h4>Talep Bilgileri</h4>
+                      <div class="detail-row">
+                        <span class="detail-label">Talep Tarihi:</span>
+                        <span class="detail-value">${requestDetails.talepTarihi || '-'}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Planlanan Tarih:</span>
+                        <span class="detail-value">${requestDetails.planlananTarih || 'Planlanmadı'}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Durum:</span>
+                        <span class="detail-value">
+                          <span class="status-badge ${statusClass}">${requestDetails.durum}</span>
+                        </span>
+                      </div>
+                    </div>
+    
+                    <div class="detail-group">
+                      <h4>Bayi Bilgileri</h4>
+                      <div class="detail-row">
+                        <span class="detail-label">Territory:</span>
+                        <span class="detail-value">${requestDetails.territory || '-'}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Bayi Kodu:</span>
+                        <span class="detail-value">${requestDetails.bayiKodu || '-'}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Bayi Adı:</span>
+                        <span class="detail-value">${requestDetails.bayiAdi || '-'}</span>
+                      </div>
+                    </div>
+    
+                    <div class="detail-group">
+                      <h4>İş Detayları</h4>
+                      <div class="detail-row">
+                        <span class="detail-label">Yapılacak İş:</span>
+                        <span class="detail-value">${requestDetails.yapilacakIs || '-'}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">İş Detayı:</span>
+                        <span class="detail-value">${requestDetails.yapilacakIsDetay || '-'}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Yapılan İşlem:</span>
+                        <span class="detail-value">${requestDetails.yapilanIsler || '-'}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">POSM Adı:</span>
+                        <span class="detail-value">${requestDetails.posmAdi || '-'}</span>
+                      </div>
+                    </div>
+    
+                    <div class="detail-group">
+                      <h4>Konum Bilgileri</h4>
+                      <div class="detail-row">
+                        <span class="detail-label">Enlem:</span>
+                        <span class="detail-value">${requestDetails.latitude || '-'}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">Boylam:</span>
+                        <span class="detail-value">${requestDetails.longitude || '-'}</span>
+                      </div>
+                      ${mapLink}
+                    </div>
+                  </div>
+    
+                  <div class="photos-section">
+                    <h4>Fotoğraflar</h4>
+                    ${photoGalleryHtml}
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+          
+          document.body.appendChild(modal);
+        })
+        .withFailureHandler(function(error) {
+          loadingElement.style.display = 'none';
+          alert('Talep detayları yüklenirken bir hata oluştu: ' + error);
+        })
+        .getRequestDetails(requestId);
+    }
+    
+    // Fotoğrafı yeni sekmede aç
+    function openPhotoInNewTab(event, url) {
+      event.preventDefault();
+      window.open(url, '_blank');
+    }
+    
+    // Fotoğraf galerisi için ek stiller
+    const photoStyles = document.createElement('style');
+    photoStyles.textContent = `
+      .photo-gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+        max-height: 600px;
+        overflow-y: auto;
+        padding: 8px;
+      }
+    
+      .photo-item {
+        position: relative;
+        aspect-ratio: 1;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background: #f8f9fa;
+      }
+    
+      .photo-link {
+        display: block;
+        width: 100%;
+        height: 100%;
+        position: relative;
+      }
+    
+      .photo-item img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.3s ease;
+      }
+    
+      .photo-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+    
+      .photo-overlay i {
+        color: white;
+        font-size: 24px;
+      }
+    
+      .photo-link:hover .photo-overlay {
+        opacity: 1;
+      }
+    
+      .photo-link:hover img {
+        transform: scale(1.1);
+      }
+    
+      .no-photos {
+        text-align: center;
+        padding: 32px;
+        color: #6c757d;
+        font-style: italic;
+        background: white;
+        border-radius: 8px;
+      }
+    
+      @media (max-width: 768px) {
+        .photo-gallery {
+          grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+          max-height: 400px;
+        }
+      }
+    `;
+    
+    document.head.appendChild(photoStyles);
+    
+    // Talep durumunu güncelle
+    function updateRequestStatus(requestId) {
+      console.log('Talep durumu güncelleniyor:', requestId);
+      
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Talep Durumu Güncelle</h2>
+            <span class="close" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</span>
+          </div>
+          <div class="modal-body">
+            <form id="updateStatusForm" onsubmit="submitStatusUpdate(event, ${requestId})">
+              <div class="form-group">
+                <label for="newStatus">Yeni Durum:</label>
+                <select id="newStatus" required>
+                  <option value="">Seçiniz</option>
+                  <option value="Beklemede">Beklemede</option>
+                  <option value="Tamamlandı">Tamamlandı</option>
+                  <option value="İptal">İptal</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="yapilanIsler">Yapılan İşler:</label>
+                <textarea id="yapilanIsler" rows="4"></textarea>
+              </div>
+              <div class="form-group">
+                <button type="submit" class="btn-primary">Güncelle</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+    }
+    
+    // Durum güncelleme formunu gönder
+    function submitStatusUpdate(event, requestId) {
+      event.preventDefault();
+      
+      const newStatus = document.getElementById('newStatus').value;
+      const yapilanIsler = document.getElementById('yapilanIsler').value;
+      
+      if (!newStatus) {
+        alert('Lütfen yeni durumu seçin');
+        return;
+      }
+      
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (result.success) {
+            alert('Durum başarıyla güncellendi');
+            // Modalı kapat
+            event.target.closest('.modal').remove();
+            // Tabloyu yenile
+            loadAllRequests();
+          } else {
+            alert(result.message || 'Durum güncellenirken bir hata oluştu');
+          }
+        })
+        .withFailureHandler(function(error) {
+          alert('Bir hata oluştu: ' + error);
+        })
+        .updateRequestStatusAdmin(requestId, newStatus, yapilanIsler);
+    }
+    
+    // Planlanan tarihi kaydet
+    function submitCalendarDate(event, requestId) {
+      event.preventDefault();
+      
+      const planlananTarih = document.getElementById('planlananTarih').value;
+      
+      if (!planlananTarih) {
+        alert('Lütfen bir tarih seçin');
+        return;
+      }
+      
+      const isUpdate = event.target.querySelector('button[type="submit"]').textContent === 'Güncelle';
+      
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (result.success) {
+            alert(`Planlanan tarih başarıyla ${isUpdate ? 'güncellendi' : 'kaydedildi'}`);
+            // Modalı kapat
+            event.target.closest('.modal').remove();
+            // Tabloyu yenile
+            loadAllRequests();
+            // Takvimi yenile (eğer görünümdeyse)
+            if (document.getElementById('requests-calendar-view').style.display === 'block') {
+              loadCalendarEvents(events => {
+                calendar.removeAllEvents();
+                calendar.addEventSource(events);
+              });
+            }
+          } else {
+            alert(result.message || 'Tarih kaydedilirken bir hata oluştu');
+          }
+        })
+        .withFailureHandler(function(error) {
+          alert('Bir hata oluştu: ' + error);
+        })
+        .updatePlannedDate(requestId, planlananTarih);
+    }
+    
+    // Modal stil tanımlamaları
+    const modalStyle = document.createElement('style');
+    modalStyle.textContent = `
+      .modal {
+        display: block;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+        overflow-y: auto;
+      }
+      
+      .modal-content {
+        background-color: #fefefe;
+        margin: 5% auto;
+        padding: 0;
+        border: none;
+        width: 90%;
+        max-width: 1200px;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      }
+      
+      .modal-header {
+        padding: 20px 24px;
+        background: linear-gradient(135deg, #3498db, #2980b9);
+        color: white;
+        border-radius: 12px 12px 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      
+      .modal-header h3 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: 500;
+      }
+      
+      .modal-body {
+        padding: 24px;
+      }
+    
+      .modal-grid {
+        display: grid;
+        grid-template-columns: 1fr 350px;
+        gap: 24px;
+      }
+    
+      .details-section {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+    
+      .detail-group {
+        background: #f8f9fa;
+        padding: 16px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      }
+    
+      .detail-group h4 {
+        margin: 0 0 12px 0;
+        color: #2c3e50;
+        font-size: 1.1rem;
+        font-weight: 600;
+        padding-bottom: 8px;
+        border-bottom: 2px solid #e9ecef;
+      }
+    
+      .detail-row {
+        display: flex;
+        margin-bottom: 8px;
+        padding: 8px;
+        background: white;
+        border-radius: 6px;
+        transition: background-color 0.2s;
+      }
+    
+      .detail-row:hover {
+        background: #f1f3f5;
+      }
+    
+      .detail-label {
+        font-weight: 500;
+        min-width: 140px;
+        color: #495057;
+      }
+    
+      .detail-value {
+        flex: 1;
+        color: #212529;
+      }
+    
+      .photos-section {
+        background: #f8f9fa;
+        padding: 16px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      }
+    
+      .photos-section h4 {
+        margin: 0 0 16px 0;
+        color: #2c3e50;
+        font-size: 1.1rem;
+        font-weight: 600;
+      }
+    
+      .photo-gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+        max-height: 600px;
+        overflow-y: auto;
+        padding-right: 8px;
+      }
+    
+      .photo-item {
+        position: relative;
+        aspect-ratio: 1;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+    
+      .photo-link {
+        display: block;
+        width: 100%;
+        height: 100%;
+        position: relative;
+      }
+    
+      .photo-item img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.3s ease;
+      }
+    
+      .photo-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+    
+      .photo-overlay i {
+        color: white;
+        font-size: 24px;
+      }
+    
+      .photo-link:hover .photo-overlay {
+        opacity: 1;
+      }
+    
+      .photo-link:hover img {
+        transform: scale(1.1);
+      }
+    
+      .no-photos {
+        text-align: center;
+        padding: 32px;
+        color: #6c757d;
+        font-style: italic;
+        background: white;
+        border-radius: 8px;
+      }
+    
+      .map-container {
+        margin-top: 16px;
+      }
+    
+      .map-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 20px;
+        background: linear-gradient(135deg, #3498db, #2980b9);
+        color: white;
+        text-decoration: none;
+        border-radius: 25px;
+        transition: all 0.3s ease;
+        font-weight: 500;
+      }
+    
+      .map-link:hover {
+        background: linear-gradient(135deg, #2980b9, #2573a7);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+      }
+    
+      .map-link i {
+        margin-right: 8px;
+        font-size: 18px;
+      }
+    
+      .close-button {
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+        cursor: pointer;
+        opacity: 0.8;
+        transition: opacity 0.2s;
+      }
+    
+      .close-button:hover {
+        opacity: 1;
+      }
+    
+      .status-badge {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+    
+      .status-badge.beklemede {
+        background: linear-gradient(135deg, #f39c12, #e67e22);
+        color: white;
+      }
+    
+      .status-badge.planlandi {
+        background: linear-gradient(135deg, #3498db, #2980b9);
+        color: white;
+      }
+    
+      .status-badge.tamamlandi {
+        background: linear-gradient(135deg, #27ae60, #219a52);
+        color: white;
+      }
+    
+      @media (max-width: 768px) {
+        .modal-grid {
+          grid-template-columns: 1fr;
+        }
+    
+        .modal-content {
+          width: 95%;
+          margin: 20px auto;
+        }
+    
+        .photo-gallery {
+          max-height: 400px;
+        }
+      }
+    `;
+    
+    document.head.appendChild(modalStyle);
+    
+    // CSS stillerini güncelle
+    const additionalStyles = document.createElement('style');
+    additionalStyles.textContent = `
+      .posm-info {
+        color: #2980b9;
+        cursor: help;
+        border-bottom: 1px dashed #2980b9;
+      }
+      
+      .planlama-bekliyor {
+        color: #e67e22;
+        font-style: italic;
+        font-size: 0.9em;
+      }
+      
+      .tooltip-inner {
+        background-color: #34495e;
+        color: white;
+        padding: 8px;
+        font-size: 12px;
+        max-width: 200px;
+        text-align: left;
+      }
+      
+      .tooltip.bs-tooltip-top .arrow::before {
+        border-top-color: #34495e;
+      }
+      
+      .btn-calendar.disabled,
+      .btn-update.disabled {
+        background-color: #bdc3c7 !important;
+        cursor: not-allowed !important;
+        opacity: 0.7;
+      }
+      
+      .btn-calendar.disabled:hover,
+      .btn-update.disabled:hover {
+        background-color: #bdc3c7 !important;
+      }
+    
+      .map-container {
+        margin-top: 20px;
+        text-align: center;
+      }
+      
+      .map-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px 16px;
+        background: linear-gradient(135deg, #3498db, #2980b9);
+        color: white;
+        text-decoration: none;
+        border-radius: 20px;
+        transition: all 0.3s ease;
+      }
+      
+      .map-link:hover {
+        background: linear-gradient(135deg, #2980b9, #2573a7);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3);
+      }
+      
+      .map-link i {
+        margin-right: 8px;
+        font-size: 16px;
+      }
+      
+      .detail-row {
+        display: flex;
+        margin-bottom: 12px;
+        padding: 8px;
+        background: rgba(0,0,0,0.02);
+        border-radius: 4px;
+      }
+      
+      .detail-label {
+        font-weight: 600;
+        min-width: 140px;
+        color: #2c3e50;
+      }
+      
+      .detail-value {
+        flex: 1;
+        color: #34495e;
+      }
+      
+      .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      
+      .status-badge.beklemede {
+        background-color: #f39c12;
+        color: white;
+      }
+      
+      .status-badge.planlandi {
+        background-color: #3498db;
+        color: white;
+      }
+      
+      .status-badge.tamamlandi {
+        background-color: #27ae60;
+        color: white;
+      }
+    `;
+    document.head.appendChild(additionalStyles);
+    
+    const responsiveStyles = document.createElement('style');
+    responsiveStyles.textContent = `
+      @media screen and (max-width: 768px) {
+        /* Tablo görünümü için mobil uyumlu stiller */
+        table {
+          width: 100%;
+          margin-bottom: 1rem;
+          display: block;
+          overflow-x: auto;
+        }
+    
+        thead {
+          display: none;
+        }
+    
+        tbody {
+          display: block;
+          width: 100%;
+        }
+    
+        tr {
+          display: block;
+          background: #fff;
+          padding: 12px;
+          margin-bottom: 12px;
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    
+        td {
+          display: flex;
+          padding: 8px 0;
+          border-bottom: 1px solid #eee;
+          align-items: center;
+        }
+    
+        td:last-child {
+          border-bottom: none;
+        }
+    
+        td:before {
+          content: attr(data-label);
+          font-weight: 600;
+          width: 120px;
+          min-width: 120px;
+          color: #2c3e50;
+          margin-right: 12px;
+        }
+    
+        /* Buton grupları için mobil uyumlu stiller */
+        .button-group {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+    
+        .btn-detail,
+        .btn-update,
+        .btn-calendar {
+          flex: 1;
+          min-width: 100px;
+          text-align: center;
+          padding: 8px 16px;
+          margin: 4px 0;
+        }
+    
+        /* Modal içeriği için mobil uyumlu stiller */
+        .modal-content {
+          width: 95%;
+          margin: 10px auto;
+          max-height: 90vh;
+          overflow-y: auto;
+        }
+    
+        .modal-grid {
+          grid-template-columns: 1fr;
+          gap: 16px;
+        }
+    
+        .detail-group {
+          margin-bottom: 16px;
+        }
+    
+        .detail-row {
+          flex-direction: column;
+          align-items: flex-start;
+          padding: 12px;
+        }
+    
+        .detail-label {
+          width: 100%;
+          margin-bottom: 4px;
+        }
+    
+        .detail-value {
+          width: 100%;
+        }
+    
+        /* Fotoğraf galerisi için mobil uyumlu stiller */
+        .photo-gallery {
+          grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+          gap: 8px;
+          max-height: 300px;
+        }
+    
+        .photo-item {
+          aspect-ratio: 1;
+        }
+    
+        /* Form elemanları için mobil uyumlu stiller */
+        .form-group {
+          margin-bottom: 16px;
+        }
+    
+        input[type="text"],
+        input[type="date"],
+        select,
+        textarea {
+          width: 100%;
+          padding: 10px;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          font-size: 16px /* iOS için minimum 16px */;
+        }
+    
+        /* Durum badge'leri için mobil uyumlu stiller */
+        .status-badge {
+          width: 100%;
+          text-align: center;
+          padding: 8px 16px;
+          margin: 4px 0;
+        }
+    
+        /* Arama sonuçları için mobil uyumlu stiller */
+        .bayi-search-results {
+          max-height: 200px;
+          width: 100%;
+        }
+    
+        .bayi-search-item {
+          padding: 12px;
+          font-size: 14px;
+        }
+    
+        /* Harita linki için mobil uyumlu stiller */
+        .map-link {
+          width: 100%;
+          justify-content: center;
+          margin-top: 12px;
+          padding: 12px;
+        }
+    
+        /* Takvim görünümü için mobil uyumlu stiller */
+        .fc .fc-toolbar {
+          flex-direction: column;
+          gap: 8px;
+        }
+    
+        .fc .fc-toolbar-title {
+          font-size: 1.2em;
+          margin: 8px 0;
+        }
+    
+        .fc .fc-button-group {
+          margin: 4px 0;
+        }
+    
+        .fc .fc-view-harness {
+          height: auto !important;
+        }
+    
+        .fc .fc-daygrid-day-number {
+          font-size: 0.9em;
+        }
+    
+        /* Loading spinner için mobil uyumlu stiller */
+        .loading-spinner {
+          padding: 20px;
+        }
+    
+        /* Tooltip için mobil uyumlu stiller */
+        .tooltip {
+          display: none !important;
+        }
+      }
+    
+      /* Tablet için ek düzenlemeler */
+      @media screen and (min-width: 769px) and (max-width: 1024px) {
+        .modal-grid {
+          grid-template-columns: 1fr;
+        }
+    
+        .photo-gallery {
+          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        }
+    
+        table {
+          font-size: 14px;
+        }
+    
+        .btn-detail,
+        .btn-update,
+        .btn-calendar {
+          padding: 6px 12px;
+          font-size: 13px;
+        }
+      }
+    `;
+    
+    document.head.appendChild(responsiveStyles);
+    
+    // Tablo hücrelerine data-label ekleme fonksiyonu
+    function addDataLabelsToTable(tableId, labels) {
+      const table = document.getElementById(tableId);
+      if (!table) return;
+    
+      const rows = table.getElementsByTagName('tr');
+      for (let i = 0; i < rows.length; i++) {
+        const cells = rows[i].getElementsByTagName('td');
+        for (let j = 0; j < cells.length; j++) {
+          if (labels[j]) {
+            cells[j].setAttribute('data-label', labels[j]);
+          }
+        }
+      }
+    }
+    
+    // Tabloları güncelle
+    function updateTableDataLabels() {
+      // Taleplerim tablosu için
+      const myRequestsLabels = [
+        'Talep Tarihi',
+        'Planlanan Tarih',
+        'Bayi Adı',
+        'Yapılacak İş',
+        'POSM',
+        'Durum',
+        'İşlemler'
+      ];
+      addDataLabelsToTable('myRequestsTableBody', myRequestsLabels);
+    
+      // Tüm talepler tablosu için
+      const allRequestsLabels = [
+        'Talep Tarihi',
+        'Planlanan Tarih',
+        'Kullanıcı',
+        'Territory',
+        'Bayi Kodu',
+        'Bayi Adı',
+        'Yapılacak İş',
+        'POSM',
+        'Durum',
+        'İşlemler'
+      ];
+      addDataLabelsToTable('allRequestsTableBody', allRequestsLabels);
+    }
+    
+    // Sayfa yüklendiğinde ve tablo güncellendiğinde çağır
+    document.addEventListener('DOMContentLoaded', updateTableDataLabels);
+    // Tablo yüklenme fonksiyonlarının sonuna ekle
+    const originalLoadTableView = loadTableView;
+    loadTableView = function() {
+      originalLoadTableView.apply(this, arguments);
+      setTimeout(updateTableDataLabels, 100);
+    };
+    
+    const originalLoadAllRequests = loadAllRequests;
+    loadAllRequests = function() {
+      originalLoadAllRequests.apply(this, arguments);
+      setTimeout(updateTableDataLabels, 100);
+    };
+    
+    const mobileMenuStyles = document.createElement('style');
+    mobileMenuStyles.textContent = `
+      /* Mobil menü stilleri */
+      @media screen and (max-width: 768px) {
+        .menu-container {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 60px;
+          background: #2c3e50;
+          z-index: 1000;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 16px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    
+        .menu-title {
+          color: white;
+          font-size: 1.2rem;
+          font-weight: 500;
+          margin: 0;
+        }
+    
+        .hamburger-menu {
+          width: 30px;
+          height: 30px;
+          padding: 4px;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-around;
+          background: none;
+          border: none;
+        }
+    
+        .hamburger-menu span {
+          display: block;
+          width: 100%;
+          height: 2px;
+          background: white;
+          transition: all 0.3s ease;
+        }
+    
+        .nav-menu {
+          position: fixed;
+          top: 60px;
+          left: -100%;
+          width: 80%;
+          height: calc(100vh - 60px);
+          background: #34495e;
+          transition: left 0.3s ease;
+          z-index: 999;
+          padding: 20px 0;
+          box-shadow: 2px 0 4px rgba(0,0,0,0.1);
+        }
+    
+        .nav-menu.active {
+          left: 0;
+        }
+    
+        .nav-menu a {
+          display: block;
+          padding: 16px 24px;
+          color: white;
+          text-decoration: none;
+          font-size: 1.1rem;
+          border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+    
+        .nav-menu a:hover {
+          background: rgba(255,255,255,0.1);
+        }
+    
+        .nav-menu a.active {
+          background: #2980b9;
+        }
+    
+        .menu-overlay {
+          position: fixed;
+          top: 60px;
+          left: 0;
+          width: 100%;
+          height: calc(100vh - 60px);
+          background: rgba(0,0,0,0.5);
+          opacity: 0;
+          visibility: hidden;
+          transition: all 0.3s ease;
+          z-index: 998;
+        }
+    
+        .menu-overlay.active {
+          opacity: 1;
+          visibility: visible;
+        }
+    
+        .dashboard-content {
+          margin-top: 60px;
+          padding: 16px;
+        }
+    
+        .logout-button {
+          background: #e74c3c;
+          color: white;
+          border: none;
+          padding: 12px 24px;
+          border-radius: 4px;
+          width: calc(100% - 48px);
+          margin: 16px 24px;
+          font-size: 1rem;
+          cursor: pointer;
+        }
+    
+        .logout-button:hover {
+          background: #c0392b;
+        }
+    
+        /* Kullanıcı bilgileri için stil */
+        .user-info {
+          padding: 16px 24px;
+          border-bottom: 1px solid rgba(255,255,255,0.1);
+          margin-bottom: 16px;
+        }
+    
+        .user-info h3 {
+          color: white;
+          margin: 0;
+          font-size: 1.1rem;
+          font-weight: 500;
+        }
+    
+        .user-info p {
+          color: rgba(255,255,255,0.7);
+          margin: 4px 0 0 0;
+          font-size: 0.9rem;
+        }
+      }
+    `;
+    
+    document.head.appendChild(mobileMenuStyles);
+    
+    // Mobil menü HTML'ini ekle
+    function addMobileMenu() {
+      const menuContainer = document.createElement('div');
+      menuContainer.className = 'menu-container';
+      menuContainer.innerHTML = `
+        <h1 class="menu-title">Teknik Servis</h1>
+        <button class="hamburger-menu" onclick="toggleMobileMenu()">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      `;
+    
+      const menuOverlay = document.createElement('div');
+      menuOverlay.className = 'menu-overlay';
+      menuOverlay.onclick = closeMobileMenu;
+    
+      const navMenu = document.createElement('nav');
+      navMenu.className = 'nav-menu';
+    
+      // Local storage'dan kullanıcı bilgilerini al
+      const userData = JSON.parse(localStorage.getItem('userData'));
+    
+      navMenu.innerHTML = `
+        <button class="logout-button" onclick="handleLogout()">
+          <i class="fas fa-sign-out-alt"></i> Çıkış Yap
+        </button>
+        <div class="user-info">
+          <h3>${userData.name}</h3>
+          <p>${userData.role}</p>
+        </div>
+        <a href="javascript:void(0)" onclick="handleMenuClick('dashboard-summary')">Dashboard</a>
+        <a href="javascript:void(0)" onclick="handleMenuClick('new-request-form')">Yeni Talep</a>
+        <a href="javascript:void(0)" onclick="handleMenuClick('my-requests-list')">Taleplerim</a>
+        <a href="javascript:void(0)" onclick="handleMenuClick('all-requests-list')">Tüm Talepler</a>
+        <a href="javascript:void(0)" onclick="handleMenuClick('posm-management')">POSM Yönetimi</a>
+      `;
+    
+      document.body.insertBefore(menuContainer, document.body.firstChild);
+      document.body.appendChild(menuOverlay);
+      document.body.appendChild(navMenu);
+    }
+    
+    // Menü tıklama işleyicisi
+    function handleMenuClick(pageId) {
+      showPage(pageId);
+      closeMobileMenu();
+    }
+    
+    // Mobil menüyü aç/kapat
+    function toggleMobileMenu() {
+      const navMenu = document.querySelector('.nav-menu');
+      const menuOverlay = document.querySelector('.menu-overlay');
+      const hamburgerMenu = document.querySelector('.hamburger-menu');
+    
+      navMenu.classList.toggle('active');
+      menuOverlay.classList.toggle('active');
+      hamburgerMenu.classList.toggle('active');
+    }
+    
+    // Mobil menüyü kapat
+    function closeMobileMenu() {
+      const navMenu = document.querySelector('.nav-menu');
+      const menuOverlay = document.querySelector('.menu-overlay');
+      const hamburgerMenu = document.querySelector('.hamburger-menu');
+    
+      navMenu.classList.remove('active');
+      menuOverlay.classList.remove('active');
+      hamburgerMenu.classList.remove('active');
+    }
+    
+    // Sayfa yüklendiğinde mobil menüyü ekle
+    document.addEventListener('DOMContentLoaded', function() {
+      if (window.innerWidth <= 768) {
+        addMobileMenu();
+      }
+    });
+    
+    // Ekran boyutu değiştiğinde kontrol et
+    window.addEventListener('resize', function() {
+      const menuContainer = document.querySelector('.menu-container');
+      if (window.innerWidth <= 768 && !menuContainer) {
+        addMobileMenu();
+      } else if (window.innerWidth > 768 && menuContainer) {
+        menuContainer.remove();
+        document.querySelector('.menu-overlay')?.remove();
+        document.querySelector('.nav-menu')?.remove();
+      }
+    });
+    
+    // POSM Düzenleme
+    function editPosm(posmName) {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>POSM Düzenle</h3>
+            <span class="close-button" onclick="this.closest('.modal').remove()">&times;</span>
+          </div>
+          <div class="modal-body">
+            <form id="editPosmForm" onsubmit="submitPosmEdit(event, '${posmName}')">
+              <div class="form-group">
+                <label for="editPosmName">POSM Adı</label>
+                <input type="text" id="editPosmName" value="${posmName}" required>
+              </div>
+              <div class="form-group">
+                <label for="editHazirAdet">Hazır Adet</label>
+                <input type="number" id="editHazirAdet" min="0" required>
+              </div>
+              <div class="form-group">
+                <label for="editTamirBekleyen">Tamir Bekleyen</label>
+                <input type="number" id="editTamirBekleyen" min="0" required>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="submit-btn">
+                  <i class="fas fa-save"></i> Kaydet
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+      
+      // Mevcut değerleri yükle
+      google.script.run
+        .withSuccessHandler(function(posm) {
+          if (posm) {
+            document.getElementById('editHazirAdet').value = posm.hazirAdet;
+            document.getElementById('editTamirBekleyen').value = posm.tamirBekleyen;
+          }
+        })
+        .checkPosmStock(posmName);
+    }
+    
+    // POSM Silme
+    function deletePosm(posmName) {
+      if (confirm(`"${posmName}" POSM'i silmek istediğinizden emin misiniz?`)) {
+        google.script.run
+          .withSuccessHandler(function(result) {
+            if (result.success) {
+              alert('POSM başarıyla silindi');
+              loadPosmManagement(); // Listeyi yenile
+            } else {
+              alert(result.message || 'POSM silinirken bir hata oluştu');
+            }
+          })
+          .withFailureHandler(function(error) {
+            alert('Bir hata oluştu: ' + error);
+          })
+          .deletePosmItem(posmName);
+      }
+    }
+    
+    // Stok Güncelleme
+    function updateStock(posmName) {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Stok Güncelle - ${posmName}</h3>
+            <span class="close-button" onclick="this.closest('.modal').remove()">&times;</span>
+          </div>
+          <div class="modal-body">
+            <form id="updateStockForm" onsubmit="submitStockUpdate(event, '${posmName}')">
+              <div class="form-group">
+                <label for="newHazirAdet">Hazır Adet</label>
+                <input type="number" id="newHazirAdet" min="0" required>
+              </div>
+              <div class="form-group">
+                <label for="newTamirBekleyen">Tamir Bekleyen</label>
+                <input type="number" id="newTamirBekleyen" min="0" required>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="submit-btn">
+                  <i class="fas fa-save"></i> Güncelle
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+      
+      // Mevcut değerleri yükle
+      google.script.run
+        .withSuccessHandler(function(posm) {
+          if (posm) {
+            document.getElementById('newHazirAdet').value = posm.hazirAdet;
+            document.getElementById('newTamirBekleyen').value = posm.tamirBekleyen;
+          }
+        })
+        .checkPosmStock(posmName);
+    }
+    
+    // POSM Düzenleme Formunu Gönder
+    function submitPosmEdit(event, oldPosmName) {
+      event.preventDefault();
+      
+      const formData = {
+        oldName: oldPosmName,
+        newName: document.getElementById('editPosmName').value,
+        hazirAdet: parseInt(document.getElementById('editHazirAdet').value),
+        tamirBekleyen: parseInt(document.getElementById('editTamirBekleyen').value)
+      };
+      
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (result.success) {
+            alert('POSM başarıyla güncellendi');
+            event.target.closest('.modal').remove();
+            loadPosmManagement(); // Listeyi yenile
+          } else {
+            alert(result.message || 'POSM güncellenirken bir hata oluştu');
+          }
+        })
+        .withFailureHandler(function(error) {
+          alert('Bir hata oluştu: ' + error);
+        })
+        .updatePosmItem(formData);
+    }
+    
+    // Stok Güncelleme Formunu Gönder
+    function submitStockUpdate(event, posmName) {
+      event.preventDefault();
+      
+      const hazirAdet = parseInt(document.getElementById('newHazirAdet').value);
+      const tamirBekleyen = parseInt(document.getElementById('newTamirBekleyen').value);
+      
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (result.success) {
+            alert('Stok başarıyla güncellendi');
+            event.target.closest('.modal').remove();
+            loadPosmManagement(); // Listeyi yenile
+          } else {
+            alert(result.message || 'Stok güncellenirken bir hata oluştu');
+          }
+        })
+        .withFailureHandler(function(error) {
+          alert('Bir hata oluştu: ' + error);
+        })
+        .updatePosmStockAdmin(posmName, hazirAdet, tamirBekleyen);
+    }
+    
+    // Yazdırma fonksiyonunu ekle
+    function printRequestDetails(requestDetails) {
+      // WebBluetooth API desteğini kontrol et
+      if (navigator.bluetooth && window.isSecureContext) {
+        // Kullanıcıya yazdırma yöntemi seçimi sun
+        const printMethod = confirm('Bluetooth yazıcı ile yazdırmak için TAMAM\'a tıklayın.\nKlasik yazdırma için İPTAL\'e tıklayın.');
+        
+        if (printMethod) {
+          printToZebraPrinter(requestDetails);
+          return;
+        }
+      }
+      
+      // Klasik yazdırma yöntemine devam et
+      google.script.run
+        .withSuccessHandler(function(logoBase64) {
+          if (!logoBase64) {
+            console.error('Logo yüklenirken hata');
+            logoBase64 = '';
+          }
+          
+          // Yazdırma şablonunu oluştur
+          const printTemplate = `
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Servis Formu</title>
+                <style>
+                  @page {
+                    size: 80mm auto;
+                    margin: 0;
+                  }
+                  
+                  @media print {
+                    body {
+                      margin: 0;
+                      padding: 0;
+                      width: 80mm;
+                      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                      -webkit-print-color-adjust: exact;
+                      print-color-adjust: exact;
+                    }
+                    
+                    .print-container {
+                      width: 79.4mm; /* 80mm - (2 * 0.3mm) */
+                      padding: 0 0.3mm; /* Sol ve sağ kenar boşluğu 0.3mm */
+                      margin: 0 auto;
+                    }
+                    
+                    img {
+                      width: 70mm; /* Logo genişliğini azalt */
+                      height: auto;
+                      margin: 2mm auto;
+                    }
+                    
+                    table {
+                      width: 100%;
+                      border-collapse: collapse;
+                      font-size: 11px; /* Yazı boyutunu küçült */
+                      line-height: 1.2;
+                    }
+                    
+                    td {
+                      padding: 1mm 0;
+                    }
+                    
+                    .divider {
+                      border-top: 1px dashed #000;
+                      margin: 2mm 0;
+                    }
+                    
+                    .signature-area {
+                      margin-top: 2mm;
+                    }
+                    
+                    .signature-line {
+                      border-top: 1px solid #000;
+                      margin-top: 8mm;
+                      width: 100%;
+                    }
+    
+                    /* İmza alanlarını optimize et */
+                    .signature-area > div {
+                      width: 48% !important; /* Genişliği azalt */
+                      font-size: 10px; /* Yazı boyutunu küçült */
+                    }
+    
+                    /* Başlık yazılarını küçült */
+                    .header-text {
+                      font-size: 12px;
+                      line-height: 1.2;
+                      margin: 2mm 0;
+                    }
+                  }
+                </style>
+              </head>
+              <body>
+                <div class="print-container">
+                  ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" style="display: block;">` : ''}
+                  <div style="text-align: center; font-weight: bold;" class="header-text">
+                    Dino Gıda San. Tic. Ltd. Şti<br>
+                    TEKNİK SERVİS FORMU
+                  </div>
+                  
+                  <table>
+                    <tr>
+                      <td style="font-weight: bold;">Talep No:</td>
+                      <td>${requestDetails.id}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight: bold;">Talep Tarihi:</td>
+                      <td>${requestDetails.talepTarihi}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight: bold;">Plan. Tarih:</td>
+                      <td>${requestDetails.planlananTarih || '-'}</td>
+                    </tr>
+                  </table>
+                  
+                  <div class="divider"></div>
+                  
+                  <table>
+                    <tr>
+                      <td style="font-weight: bold;">Territory:</td>
+                      <td>${requestDetails.territory}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight: bold;">Bayi Kodu:</td>
+                      <td>${requestDetails.bayiKodu}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight: bold;">Bayi Adı:</td>
+                      <td>${requestDetails.bayiAdi}</td>
+                    </tr>
+                  </table>
+                  
+                  <div class="divider"></div>
+                  
+                  <table>
+                    <tr>
+                      <td style="font-weight: bold;">Yapılacak İş:</td>
+                      <td>${requestDetails.yapilacakIs}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight: bold;">İş Detayı:</td>
+                      <td>${requestDetails.yapilacakIsDetay}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight: bold;">POSM Adı:</td>
+                      <td>${requestDetails.posmAdi || '-'}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight: bold;">Durum:</td>
+                      <td>${requestDetails.durum}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-weight: bold;">Yapılan İşler:</td>
+                      <td>${requestDetails.yapilanIsler}</td>
+                    </tr>
+                  </table>
+                  
+                  <div class="divider"></div>
+                  
+                  <!-- Teslim Şartları -->
+                  <div style="margin: 2mm 0; padding: 2mm; border: 1px solid #000; font-size: 9px; line-height: 1.2; text-align: justify;">
+                    <div style="text-align: center; font-weight: bold; margin-bottom: 1mm;">
+                      POSM TESLİM VE KULLANIM ŞARTLARI
+                    </div>
+                    <p style="margin: 0 0 1mm 0;">
+                      İşbu form ile teslim alınan POSM malzemelerinin sağlam, eksiksiz ve çalışır durumda olduğu taraflarca teyit edilmiştir. 
+                      Teslim alan taraf, POSM malzemelerini amacına uygun şekilde kullanacağını, düzenli bakımını yapacağını ve malzemelerin 
+                      korunmasından sorumlu olacağını kabul ve taahhüt eder.
+                    </p>
+                    <p style="margin: 0;">
+                      POSM malzemelerinde oluşabilecek her türlü hasar, kayıp veya uygunsuz kullanımdan teslim alan taraf sorumludur. 
+                      Dino Gıda San. Tic. Ltd. Şti.'nin yazılı izni olmadan POSM malzemeleri üzerinde değişiklik yapılamaz, başka amaçlarla 
+                      kullanılamaz veya devredilemez.
+                    </p>
+                  </div>
+                  
+                  <div class="signature-area">
+                    <div style="float: left; width: 45%; text-align: center;">
+                      <div style="font-weight: bold;">Teslim Alan</div>
+                      <div style="margin-top: 2mm;">Ad Soyad:</div>
+                      <div class="signature-line"></div>
+                      <div style="margin-top: 2mm;">İmza:</div>
+                      <div class="signature-line"></div>
+                    </div>
+                    
+                    <div style="float: right; width: 45%; text-align: center;">
+                      <div style="font-weight: bold;">Teslim Eden</div>
+                      <div style="margin-top: 2mm;">Ad Soyad:</div>
+                      <div class="signature-line"></div>
+                      <div style="margin-top: 2mm;">İmza:</div>
+                      <div class="signature-line"></div>
+                    </div>
+                    
+                    <div style="clear: both;"></div>
+                  </div>
+                  
+                  <div style="text-align: center; margin-top: 6mm; font-size: 10px;">
+                    Nüsha 1/2
+                  </div>
+                </div>
+              </body>
+            </html>
+          `;
+          
+          // Yazdırma penceresini aç
+          const printWindow = window.open('', '', 'width=800,height=600');
+          printWindow.document.write(printTemplate);
+          printWindow.document.write(printTemplate.replace('Nüsha 1/2', 'Nüsha 2/2'));
+          
+          // Yazdırma işlemini başlat
+          setTimeout(() => {
+            printWindow.focus(); // Yazdırma penceresine odaklan
+            printWindow.print();
+            printWindow.close();
+          }, 500);
+        })
+        .withFailureHandler(function(error) {
+          console.error('Logo yüklenirken hata:', error);
+          alert('Logo yüklenirken bir hata oluştu, form logosuz yazdırılacak.');
+          printRequestDetails(requestDetails);
+        })
+        .getLogoBase64();
+    }
+    
+    // CSS stillerini güncelle
+    const printStyles = document.createElement('style');
+    printStyles.textContent = `
+      .map-container {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        margin-top: 20px;
+      }
+      
+      .print-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px 16px;
+        background: linear-gradient(135deg, #2ecc71, #27ae60);
+        color: white;
+        text-decoration: none;
+        border: none;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.3s ease;
+      }
+      
+      .print-link:hover {
+        background: linear-gradient(135deg, #27ae60, #219a52);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(46, 204, 113, 0.3);
+      }
+      
+      .print-link i {
+        margin-right: 8px;
+        font-size: 16px;
+      }
+    `;
+    document.head.appendChild(printStyles);
+    
+    // Footer stillerini güncelle
+    const footerStyles = document.createElement('style');
+    footerStyles.textContent = `
+      .page-footer {
+        text-align: center;
+        padding: 25px 0;
+        margin-top: auto;
+        background: linear-gradient(135deg, #2c3e50, #3498db);
+        position: sticky;
+        bottom: 0;
+        width: 100%;
+        box-shadow: 0 -4px 15px rgba(0,0,0,0.1);
+      }
+    
+      .footer-signature {
+        font-size: 15px;
+        color: white;
+        font-style: normal;
+        font-weight: 500;
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 25px;
+        border-radius: 30px;
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(5px);
+        transition: all 0.3s ease;
+        letter-spacing: 0.5px;
+      }
+    
+      .footer-signature:hover {
+        transform: translateY(-2px);
+        background: rgba(255, 255, 255, 0.2);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+      }
+    
+      .footer-signature i {
+        color: #fff;
+        font-size: 18px;
+        animation: pulse 2s infinite;
+      }
+    
+      @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.2); }
+        100% { transform: scale(1); }
+      }
+    
+      .dashboard-section {
+        min-height: calc(100vh - 60px);
+        display: flex;
+        flex-direction: column;
+      }
+    
+      @media print {
+        .page-footer {
+          display: none;
+        }
+      }
+    `;
+    
+    // Footer'ı sayfalara ekle
+    function addPageFooter() {
+      const sections = document.querySelectorAll('.dashboard-section');
+      
+      sections.forEach(section => {
+        if (!section.querySelector('.page-footer')) {
+          const footerDiv = document.createElement('div');
+          footerDiv.className = 'page-footer';
+          footerDiv.innerHTML = `
+            <div class="footer-signature">
+              <i class="fas fa-code"></i>
+              Powered by Oğuz EMÜL
+            </div>
+          `;
+          section.appendChild(footerDiv);
+        }
+      });
+    }
+    
+    // showPage fonksiyonunu güncelle
+    const originalShowPage = showPage;
+    showPage = function(pageId) {
+      originalShowPage.apply(this, arguments);
+      setTimeout(addPageFooter, 100);
+    };
+    
+    // Çıkış yap butonu stillerini güncelle
+    const logoutStyles = document.createElement('style');
+    logoutStyles.textContent = `
+      .logout-button {
+        background: #e74c3c;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 4px;
+        width: calc(100% - 48px);
+        margin: 16px 24px;
+        font-size: 1rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: all 0.3s ease;
+      }
+    
+      .logout-button:hover {
+        background: #c0392b;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(231, 76, 60, 0.3);
+      }
+    
+      .logout-button i {
+        font-size: 1.1rem;
+      }
+    
+      @media screen and (max-width: 768px) {
+        .logout-button {
+          margin: 12px 24px;
+          padding: 10px 20px;
+        }
+      }
+    `;
+    document.head.appendChild(logoutStyles);
+    
+    // Zebra Bluetooth Yazdırma Fonksiyonu
+    async function printToZebraPrinter(requestDetails) {
+      try {
+        // Bluetooth cihazını seç
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [
+            { namePrefix: 'ZQ3' },  // ZQ320 için
+            { services: ['000018f0-0000-1000-8000-00805f9b34fb'] }  // Zebra Servis UUID
+          ]
+        });
+    
+        // Cihaza bağlan
+        const server = await device.gatt.connect();
+        
+        // Zebra servisini bul
+        const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+        
+        // Yazdırma karakteristiğini bul
+        const characteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+    
+        // ZPL formatında yazdırma komutu oluştur
+        const zplCommand = generateZPLCommand(requestDetails);
+        
+        // Komutu yazıcıya gönder
+        await characteristic.writeValue(new TextEncoder().encode(zplCommand));
+        
+        alert('Yazdırma işlemi başarılı!');
+      } catch (error) {
+        console.error('Yazdırma hatası:', error);
+        alert('Yazdırma işlemi başarısız. Alternatif yöntem kullanılıyor...');
+        // Yedek yöntem: PDF oluştur
+        generatePrintablePDF(requestDetails);
+      }
+    }
+    
+    // ZPL Komut Oluşturucu
+    function generateZPLCommand(requestDetails) {
+      return `^XA
+    ^CF0,30
+    ^FO50,50^FDDino Gıda San. Tic. Ltd. Şti^FS
+    ^FO50,90^FDTEKNİK SERVİS FORMU^FS
+    ^FO50,140^FDTalep No: ${requestDetails.id}^FS
+    ^FO50,170^FDTalep Tarihi: ${requestDetails.talepTarihi}^FS
+    ^FO50,200^FDPlan. Tarih: ${requestDetails.planlananTarih || '-'}^FS
+    ^FO50,240^FDTerritory: ${requestDetails.territory}^FS
+    ^FO50,270^FDBayi Kodu: ${requestDetails.bayiKodu}^FS
+    ^FO50,300^FDBayi Adı: ${requestDetails.bayiAdi}^FS
+    ^FO50,340^FDYapılacak İş: ${requestDetails.yapilacakIs}^FS
+    ^FO50,370^FDİş Detayı: ${requestDetails.yapilacakIsDetay}^FS
+    ^FO50,400^FDPOSM Adı: ${requestDetails.posmAdi || '-'}^FS
+    ^FO50,430^FDDurum: ${requestDetails.durum}^FS
+    ^FO50,460^FDYapılan İşler: ${requestDetails.yapilanIsler}^FS
+    ^FO50,520^GB700,1,2^FS
+    ^FO50,540^FDTeslim Alan:^FS
+    ^FO50,570^FDAd Soyad:_________________^FS
+    ^FO50,600^FDİmza:_________________^FS
+    ^FO400,540^FDTeslim Eden:^FS
+    ^FO400,570^FDAd Soyad:_________________^FS
+    ^FO400,600^FDİmza:_________________^FS
+    ^FO300,650^FDNüsha 1/2^FS
+    ^XZ`;
+    }
+    
+    // PDF Oluşturucu (Yedek Yöntem)
+    function generatePrintablePDF(requestDetails) {
+      const content = `
+        <html>
+          <head>
+            <title>Yazdırma Yönergeleri</title>
+            <style>
+              body { font-family: Arial; padding: 20px; }
+              .instructions { margin-bottom: 20px; }
+              .print-options { margin-top: 20px; }
+            </style>
+          </head>
+          <body>
+            <div class="instructions">
+              <h3>Yazdırma Seçenekleri:</h3>
+              <ol>
+                <li>Bu sayfayı PDF olarak kaydedin</li>
+                <li>Zebra Browser Print uygulamasını açın</li>
+                <li>PDF'i Zebra Browser Print ile açın</li>
+                <li>Yazdır butonuna tıklayın</li>
+              </ol>
+            </div>
+            <div class="print-content">
+              ${generatePrintContent(requestDetails)}
+            </div>
+          </body>
+        </html>
+      `;
+      
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(content);
+    }
+    </script>

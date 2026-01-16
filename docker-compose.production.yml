@@ -1,0 +1,89 @@
+version: "3.9"
+
+services:
+  # Production'da DB'yi ayrı bir servis olarak kullanabilirsiniz
+  # VEYA managed database kullanın (önerilen)
+  db:
+    image: postgres:16-alpine
+    container_name: teknik_servis_db_prod
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - db_data_prod:/var/lib/postgresql/data
+      # Backup volume
+      - ./backups:/backups
+    ports:
+      - "127.0.0.1:5432:5432"  # Sadece localhost'tan erişilebilir
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+    restart: unless-stopped
+    # Production için resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.production
+    container_name: teknik_servis_api_prod
+    env_file:
+      - .env.production
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"  # Nginx reverse proxy arkasında
+    volumes:
+      - uploads_prod:/app/uploads
+      - backups_prod:/app/backups
+    networks:
+      - app_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: teknik_servis_frontend_prod
+    ports:
+      - "127.0.0.1:80:80"
+    depends_on:
+      - api
+    networks:
+      - app_network
+    restart: unless-stopped
+
+volumes:
+  db_data_prod:
+    driver: local
+  uploads_prod:
+    driver: local
+  backups_prod:
+    driver: local
+
+networks:
+  app_network:
+    driver: bridge

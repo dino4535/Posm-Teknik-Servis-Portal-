@@ -1,0 +1,86 @@
+<script>
+    // Login işlemi (optimize edildi)
+    function handleLogin(event) {
+      event.preventDefault();
+      
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const errorMessage = document.getElementById('error-message');
+      const submitButton = event.target.querySelector('button[type="submit"]');
+      
+      // Basit validasyon
+      if (!email || !password) {
+        errorMessage.textContent = 'Lütfen e-posta ve şifre alanlarını doldurun.';
+        return;
+      }
+      
+      // Button'u devre dışı bırak
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = 'Giriş yapılıyor...';
+      }
+      
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (result.success) {
+            // Session storage'a kullanıcı bilgilerini kaydet
+            localStorage.setItem('userData', JSON.stringify(result.userData));
+            // Cache'i temizle
+            sessionStorage.clear();
+            // Ana sayfaya yönlendir
+            google.script.run.withSuccessHandler(function(url) {
+              window.location.assign(url + '?page=dashboard');
+            }).getScriptUrl();
+          } else {
+            errorMessage.textContent = 'Geçersiz e-posta veya şifre!';
+            // Button'u tekrar aktif et
+            if (submitButton) {
+              submitButton.disabled = false;
+              submitButton.textContent = 'Giriş Yap';
+            }
+          }
+        })
+        .withFailureHandler(function(error) {
+          errorMessage.textContent = 'Bir hata oluştu. Lütfen tekrar deneyin.';
+          // Button'u tekrar aktif et
+          if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent = 'Giriş Yap';
+          }
+        })
+        .validateLogin(email, password);
+    }
+    
+    // Sayfa yüklendiğinde çalışacak fonksiyon (optimize edildi)
+    window.onload = function() {
+      // Eğer kullanıcı zaten giriş yapmışsa dashboard'a yönlendir
+      const userData = localStorage.getItem('userData');
+      if (userData) {
+        try {
+          const parsedData = JSON.parse(userData);
+          if (parsedData && parsedData.email) {
+            google.script.run.withSuccessHandler(function(url) {
+              window.location.assign(url + '?page=dashboard');
+            }).getScriptUrl();
+            return;
+          }
+        } catch (error) {
+          // Geçersiz userData varsa temizle
+          localStorage.removeItem('userData');
+        }
+      }
+      
+      // Form elementlerine focus event'i ekle
+      const emailInput = document.getElementById('email');
+      const passwordInput = document.getElementById('password');
+      const errorMessage = document.getElementById('error-message');
+      
+      if (emailInput && passwordInput && errorMessage) {
+        [emailInput, passwordInput].forEach(input => {
+          input.addEventListener('focus', function() {
+            errorMessage.textContent = '';
+          });
+        });
+      }
+    }
+    </script>

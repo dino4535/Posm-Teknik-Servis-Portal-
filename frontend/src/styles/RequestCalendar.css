@@ -1,0 +1,194 @@
+.calendar-container {
+  margin: 0;
+  padding: 32px;
+  background: white;
+  border-radius: 0;
+  box-shadow: none;
+  border: none;
+}
+
+/* FullCalendar özelleştirmeleri */
+.fc {
+  font-family: 'Inter', sans-serif;
+}
+
+.fc .fc-toolbar-title {
+  font-size: 1.5em !important;
+  font-weight: 700;
+  color: #1a202c;
+  letter-spacing: -0.02em;
+}
+
+.fc .fc-button {
+  background-color: #667eea !important;
+  border-color: #667eea !important;
+  padding: 8px 16px !important;
+  font-size: 0.9em !important;
+  font-weight: 600 !important;
+  text-transform: capitalize !important;
+  border-radius: 10px !important;
+  transition: all 0.2s ease !important;
+}
+
+.fc .fc-button:hover {
+  background-color: #5568d3 !important;
+  border-color: #5568d3 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.fc .fc-button-active {
+  background-color: #5568d3 !important;
+  border-color: #5568d3 !important;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3) !important;
+}
+
+.fc .fc-daygrid-day {
+  min-height: 120px !important;
+  border-color: #e2e8f0 !important;
+}
+
+.fc .fc-daygrid-day-frame {
+  padding: 8px !important;
+}
+
+.fc .fc-daygrid-day-number {
+  font-size: 15px !important;
+  color: #2d3748 !important;
+  padding: 8px !important;
+  font-weight: 600 !important;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.fc .fc-daygrid-day-number:hover {
+  background: #f7fafc;
+}
+
+.fc .fc-col-header-cell {
+  padding: 12px 8px !important;
+  background: #f7fafc !important;
+  border-color: #e2e8f0 !important;
+}
+
+.fc .fc-col-header-cell-cushion {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #4a5568 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+.fc-event {
+  cursor: pointer;
+  margin: 3px 0 !important;
+  padding: 8px 12px !important;
+  font-size: 13px !important;
+  border-radius: 10px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600 !important;
+  border: none !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1) !important;
+  transition: all 0.2s ease !important;
+}
+
+.fc-event:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+  z-index: 10 !important;
+}
+
+.status-beklemede {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%) !important;
+  color: #92400e !important;
+  border-left: 4px solid #f59e0b !important;
+}
+
+.status-planlandi {
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%) !important;
+  color: #1e40af !important;
+  border-left: 4px solid #3b82f6 !important;
+}
+
+.status-tamamlandi {
+  background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%) !important;
+  color: #065f46 !important;
+  border-left: 4px solid #10b981 !important;
+}
+
+.fc .fc-day-today {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.08) 0%, rgba(118, 75, 162, 0.05) 100%) !important;
+  border: 2px solid #667eea !important;
+}
+
+.fc .fc-day-today .fc-daygrid-day-number {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white !important;
+  font-weight: 700 !important;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.fc .fc-day-sat,
+.fc .fc-day-sun {
+  background-color: #fafbfc !important;
+}
+
+.fc .fc-day-sat .fc-col-header-cell-cushion,
+.fc .fc-day-sun .fc-col-header-cell-cushion {
+  color: #e53e3e !important;
+}
+
+.fc td,
+.fc th {
+  border-color: #e2e8f0 !important;
+}
+
+.fc .fc-more-link {
+  font-weight: 600 !important;
+  color: #667eea !important;
+  text-decoration: none !important;
+  padding: 4px 8px !important;
+  border-radius: 6px !important;
+  transition: all 0.2s !important;
+}
+
+.fc .fc-more-link:hover {
+  background: rgba(102, 126, 234, 0.1) !important;
+}
+
+.fc .fc-daygrid-more-link {
+  font-size: 12px !important;
+}
+
+.fc .fc-scrollgrid {
+  border-color: #e2e8f0 !important;
+}
+
+.fc .fc-scrollgrid-section-header > td {
+  border-color: #e2e8f0 !important;
+}
+
+@media screen and (max-width: 768px) {
+  .calendar-container {
+    margin: 0;
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .fc .fc-toolbar {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .fc .fc-toolbar-chunk {
+    display: flex;
+    justify-content: center;
+  }
+}

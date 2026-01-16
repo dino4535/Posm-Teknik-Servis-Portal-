@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <title>Teknik Servis Portalı - Dashboard</title>
+    <?!= include('DashboardStyle'); ?>
+    
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    
+    <!-- Bootstrap Tooltip -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- FullCalendar Kütüphanesi -->
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+    <script src='https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.10/locales/tr.global.min.js'></script>
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: 'Inter', sans-serif;
+      }
+
+      body {
+        background: #f5f6fa;
+        color: #2c3e50;
+        line-height: 1.6;
+      }
+
+      .dashboard-container {
+        display: flex;
+        min-height: 100vh;
+      }
+
+      .sidebar {
+        width: 250px;
+        background: #2c3e50;
+        color: white;
+        padding: 20px 0;
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        height: 100vh;
+        z-index: 100;
+      }
+
+      .main-content {
+        flex: 1;
+        padding: 20px;
+        background: #f5f6fa;
+        margin-left: 250px;
+      }
+
+      @media screen and (max-width: 768px) {
+        .sidebar {
+          display: none !important;
+        }
+
+        .main-content {
+          margin-left: 0;
+          padding-top: 70px;
+        }
+
+        .dashboard-container {
+          flex-direction: column;
+        }
+
+        .user-info, .sidebar-nav, .sidebar-footer {
+          display: none;
+        }
+      }
+
+      /* Takvim Stilleri */
+      .calendar-container {
+        margin: 20px;
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      
+      .calendar-view-toggle {
+        margin-bottom: 15px;
+      }
+      
+      /* Takvim başlık ve buton stilleri */
+      .fc .fc-toolbar-title {
+        font-size: 1.2em !important;
+        font-weight: 600;
+        color: #2c3e50;
+      }
+      
+      .fc .fc-button {
+        background-color: #3498db !important;
+        border-color: #3498db !important;
+        padding: 6px 12px !important;
+        font-size: 0.9em !important;
+        font-weight: 500 !important;
+        text-transform: capitalize !important;
+      }
+      
+      .fc .fc-button:hover {
+        background-color: #2980b9 !important;
+        border-color: #2980b9 !important;
+      }
+      
+      .fc .fc-button-active {
+        background-color: #2980b9 !important;
+        border-color: #2980b9 !important;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.15) !important;
+      }
+      
+      /* Takvim hücre stilleri */
+      .fc .fc-daygrid-day {
+        min-height: 80px !important;
+      }
+      
+      .fc .fc-daygrid-day-frame {
+        padding: 4px !important;
+      }
+      
+      .fc .fc-daygrid-day-number {
+        font-size: 0.9em;
+        color: #2c3e50;
+        padding: 4px !important;
+      }
+      
+      /* Olay stilleri */
+      .fc-event {
+        cursor: pointer;
+        margin: 1px 0 !important;
+        padding: 2px 4px !important;
+        font-size: 0.8em !important;
+        border-radius: 3px !important;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      
+      .status-beklemede {
+        background-color: #f39c12 !important;
+        border-color: #f39c12 !important;
+        color: white !important;
+      }
+      
+      .status-planlandi {
+        background-color: #3498db !important;
+        border-color: #3498db !important;
+        color: white !important;
+      }
+      
+      .status-tamamlandi {
+        background-color: #27ae60 !important;
+        border-color: #27ae60 !important;
+        color: white !important;
+      }
+      
+      /* Tooltip stilleri */
+      .tooltip {
+        font-size: 0.8em !important;
+        opacity: 0.95 !important;
+      }
+      
+      .tooltip-inner {
+        max-width: 250px !important;
+        padding: 8px !important;
+        background-color: #34495e !important;
+        border-radius: 4px !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+      }
+      
+      .tooltip.show {
+        opacity: 0.95 !important;
+      }
+      
+      /* Bugün vurgusu */
+      .fc .fc-day-today {
+        background-color: rgba(52, 152, 219, 0.05) !important;
+      }
+      
+      /* Hafta sonu renklendirmesi */
+      .fc .fc-day-sat, .fc .fc-day-sun {
+        background-color: #f8f9fa !important;
+      }
+      
+      /* Takvim ızgara çizgileri */
+      .fc td, .fc th {
+        border-color: #e9ecef !important;
+      }
+      
+      /* Yükleniyor Animasyonu Stilleri */
+      .loading-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 40px;
+        flex-direction: column;
+      }
+      
+      .cigarette-shelf {
+        width: 400px;
+        height: 300px;
+        background: linear-gradient(45deg, #1a1a1a, #2c2c2c);
+        border-radius: 8px;
+        padding: 20px;
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        grid-template-rows: repeat(4, 1fr);
+        gap: 8px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        position: relative;
+        border: 1px solid #3a3a3a;
+      }
+
+      .cigarette-shelf::before {
+        content: '';
+        position: absolute;
+        top: -15px;
+        left: -2px;
+        right: -2px;
+        height: 15px;
+        background: linear-gradient(45deg, #2a2a2a, #3a3a3a);
+        border-radius: 5px 5px 0 0;
+        border: 1px solid #3a3a3a;
+        border-bottom: none;
+      }
+
+      .shelf-slot {
+        background: linear-gradient(135deg, #222, #1a1a1a);
+        border-radius: 3px;
+        position: relative;
+        overflow: hidden;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+        border: 1px solid #333;
+        aspect-ratio: 0.7;
+      }
+
+      .package {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background: #c60000;
+        opacity: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 3px;
+        box-sizing: border-box;
+      }
+
+      .package::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 30%;
+        background: linear-gradient(180deg, 
+          rgba(255,255,255,0.2) 0%,
+          rgba(255,255,255,0.1) 50%,
+          rgba(255,255,255,0) 100%);
+      }
+
+      .package::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 30%;
+        background: linear-gradient(0deg, 
+          rgba(0,0,0,0.3) 0%,
+          rgba(0,0,0,0.1) 50%,
+          rgba(0,0,0,0) 100%);
+      }
+
+      .package-top {
+        width: 100%;
+        height: 15%;
+        background: rgba(255,255,255,0.1);
+        border-radius: 1px;
+      }
+
+      .package-bottom {
+        width: 100%;
+        height: 15%;
+        background: rgba(0,0,0,0.2);
+        border-radius: 1px;
+      }
+
+
+      
+      .loading-text {
+        color: #2c3e50;
+        font-size: 18px;
+        font-weight: 500;
+        margin-top: 25px;
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      .loading-text::after {
+        content: '';
+        animation: dots 2s infinite steps(4);
+      }
+
+      @keyframes dots {
+        0% { content: ''; }
+        25% { content: '.'; }
+        50% { content: '..'; }
+        75% { content: '...'; }
+        100% { content: ''; }
+      }
+      
+      .loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(255, 255, 255, 0.97);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+        backdrop-filter: blur(8px);
+      }
+      
+      .table-container {
+        position: relative;
+        min-height: 200px;
+      }
+
+      /* Genel buton stilleri */
+      button, .btn-primary, .submit-btn, .logout-btn, .action-btn {
+        border-radius: 20px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: none;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 100px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+
+      /* Tablo buton stilleri */
+      .action-btn {
+        padding: 6px 16px;
+        min-width: 90px;
+        height: 32px;
+        margin: 0 4px;
+      }
+
+      .btn-detail {
+        background: linear-gradient(135deg, #3498db, #2980b9);
+        color: white;
+        box-shadow: 0 2px 4px rgba(52, 152, 219, 0.2);
+      }
+
+      .btn-detail:hover {
+        background: linear-gradient(135deg, #2980b9, #2573a7);
+        box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3);
+        transform: translateY(-1px);
+      }
+
+      .btn-update {
+        background: linear-gradient(135deg, #27ae60, #219a52);
+        color: white;
+        box-shadow: 0 2px 4px rgba(39, 174, 96, 0.2);
+      }
+
+      .btn-update:hover {
+        background: linear-gradient(135deg, #219a52, #1e8449);
+        box-shadow: 0 4px 8px rgba(39, 174, 96, 0.3);
+        transform: translateY(-1px);
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #3498db, #2980b9);
+        color: white;
+        margin: 0 5px;
+      }
+
+      .btn-primary:hover {
+        background: linear-gradient(135deg, #2980b9, #2573a7);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3);
+      }
+
+      .submit-btn {
+        background: linear-gradient(135deg, #27ae60, #219a52);
+        color: white;
+        width: 100%;
+        padding: 12px;
+        margin-top: 20px;
+      }
+
+      .submit-btn:hover {
+        background: linear-gradient(135deg, #219a52, #1e8449);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(39, 174, 96, 0.3);
+      }
+
+      .logout-btn {
+        background: linear-gradient(135deg, #e74c3c, #c0392b);
+        color: white;
+        width: 100%;
+      }
+
+      .logout-btn:hover {
+        background: linear-gradient(135deg, #c0392b, #a93226);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(231, 76, 60, 0.3);
+      }
+
+      button:disabled, .btn-primary:disabled, .submit-btn:disabled, .action-btn:disabled {
+        background: linear-gradient(135deg, #bdc3c7, #95a5a6);
+        cursor: not-allowed;
+        box-shadow: none;
+        transform: none;
+      }
+
+      .action-btn i {
+        margin-right: 6px;
+        font-size: 14px;
+      }
+
+      /* Buton container stili */
+      .btn-container {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        align-items: center;
+      }
+
+      /* Tablo stilleri */
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+
+      .data-table th,
+      .data-table td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+      }
+
+      .data-table th {
+        background: #f8f9fa;
+        font-weight: 600;
+        color: #2c3e50;
+      }
+
+      .data-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      /* Mobil tablo stilleri */
+      @media screen and (max-width: 768px) {
+        .data-table {
+          display: block;
+          box-shadow: none;
+          background: transparent;
+        }
+
+        .data-table thead {
+          display: none;
+        }
+
+        .data-table tbody {
+          display: block;
+        }
+
+        .data-table tr {
+          display: block;
+          background: white;
+          padding: 12px;
+          margin-bottom: 12px;
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .data-table td {
+          display: flex;
+          padding: 8px 0;
+          border-bottom: 1px solid #eee;
+        }
+
+        .data-table td:last-child {
+          border-bottom: none;
+        }
+
+        .data-table td:before {
+          content: attr(data-label);
+          font-weight: 600;
+          width: 40%;
+          min-width: 120px;
+          color: #2c3e50;
+          padding-right: 12px;
+        }
+
+        .data-table td .btn-container {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-top: 8px;
+          width: 100%;
+        }
+
+        .data-table td .action-btn {
+          flex: 1;
+          min-width: 120px;
+          margin: 0;
+        }
+
+        /* Durum badge'i için özel stil */
+        .data-table td .status-badge {
+          display: inline-block;
+          padding: 4px 12px;
+          border-radius: 20px;
+          font-size: 12px;
+          font-weight: 500;
+          text-align: center;
+        }
+
+        /* POSM bilgisi için özel stil */
+        .data-table td .posm-info {
+          display: inline-block;
+          padding: 4px 0;
+        }
+
+        /* Tarih alanları için özel stil */
+        .data-table td[data-label="Talep Tarihi"],
+        .data-table td[data-label="Planlanan Tarih"] {
+          font-size: 14px;
+        }
+
+        /* İşlemler sütunu için özel stil */
+        .data-table td:last-child {
+          padding-top: 12px;
+        }
+      }
+
+      /* Tablet görünümü için ek düzenlemeler */
+      @media screen and (min-width: 769px) and (max-width: 1024px) {
+        .data-table th,
+        .data-table td {
+          padding: 8px;
+          font-size: 14px;
+        }
+
+        .action-btn {
+          padding: 6px 12px;
+          font-size: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="dashboard-container">
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <h3>Teknik Servis Portalı</h3>
+        </div>
+        <div class="user-info">
+          <span id="userName">Kullanıcı</span>
+          <span id="userRole">Rol</span>
+        </div>
+        <nav class="sidebar-nav">
+          <ul>
+            <li><a href="#" data-page="dashboard-summary">Dashboard</a></li>
+            <li><a href="#" data-page="new-request-form">Yeni Talep</a></li>
+            <li><a href="#" data-page="my-requests-list">Taleplerim</a></li>
+            <li class="admin-only"><a href="#" data-page="all-requests-list">Tüm Talepler</a></li>
+            <li class="admin-only"><a href="#" data-page="posm-management">POSM Yönetimi</a></li>
+          </ul>
+        </nav>
+        <div class="sidebar-footer">
+          <button onclick="handleLogout()" class="logout-btn">Çıkış Yap</button>
+        </div>
+      </div>
+
+      <!-- Ana içerik alanı -->
+      <div class="main-content">
+        <!-- Dashboard özeti -->
+        <div id="dashboard-summary" class="dashboard-section">
+          <h2>Hoş Geldiniz</h2>
+          <div class="summary-cards">
+            <div class="summary-card">
+              <h3>Açık Talepler</h3>
+              <p id="openRequestCount">0</p>
+            </div>
+            <div class="summary-card">
+              <h3>Tamamlanan Talepler</h3>
+              <p id="completedRequestCount">0</p>
+            </div>
+            <div class="summary-card">
+              <h3>Bekleyen Talepler</h3>
+              <p id="pendingRequestCount">0</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Yeni talep formu -->
+        <div id="new-request-form" class="dashboard-section">
+          <h2>Yeni Teknik Servis Talebi</h2>
+          <form id="serviceRequestForm" onsubmit="handleNewRequest(event)">
+            <div class="form-group">
+              <label for="territory">Territory</label>
+              <select id="territory" name="territory" required onchange="handleTerritoryChange()">
+                <option value="">Territory Seçiniz</option>
+                <!-- Territory'ler JavaScript ile doldurulacak -->
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="bayiSearch">Bayi Ara</label>
+              <div class="bayi-search-container">
+                <input type="text" id="bayiSearch" placeholder="Bayi kodu veya adı ile arayın..." oninput="handleBayiSearch()">
+                <div id="bayiSearchResults" class="bayi-search-results">
+                  <!-- Arama sonuçları burada listelenecek -->
+                </div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="bayiKodu">Seçilen Bayi</label>
+              <div class="selected-bayi">
+                <input type="text" id="bayiKodu" name="bayiKodu" required readonly>
+                <input type="text" id="bayiAdi" readonly>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="yapilacakIs">Yapılacak İş</label>
+              <select id="yapilacakIs" name="yapilacakIs" required>
+                <option value="">Seçiniz</option>
+                <option value="Montaj">Montaj</option>
+                <option value="Demontaj">Demontaj</option>
+                <option value="Bakım">Bakım</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="yapilacakIsDetay">Yapılacak İşler Detayı</label>
+              <textarea id="yapilacakIsDetay" name="yapilacakIsDetay" rows="4" placeholder="Yapılacak işlerin detaylarını buraya yazın..."></textarea>
+            </div>
+            <div class="form-group">
+              <label for="istenentarih">İşin Yapılması İstenen Tarih</label>
+              <input type="date" id="istenentarih" name="istenentarih" required>
+            </div>
+            <div id="posmSection" style="display: none;">
+              <div class="form-group">
+                <label for="posmSelect">POSM Seçimi</label>
+                <select id="posmSelect" name="posmSelect">
+                  <!-- POSM'ler JavaScript ile doldurulacak -->
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Mevcut Stok:</label>
+                <span id="currentStock">-</span>
+              </div>
+            </div>
+            <div id="photoUpload" style="display: none;">
+              <div class="form-group">
+                <label>Fotoğraf Yükle</label>
+                <div class="photo-upload-container">
+                  <input type="file" id="photoInput" name="photos" accept="image/*" multiple onchange="handlePhotoSelect(event)">
+                  <div class="selected-photos" id="selectedPhotos"></div>
+                  <div class="upload-progress" id="uploadProgress" style="display: none;">
+                    <div class="progress-bar">
+                      <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">0%</div>
+                    <div class="current-file" id="currentFile"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button type="submit" class="submit-btn">Talep Oluştur</button>
+          </form>
+        </div>
+
+        <!-- Taleplerim listesi -->
+        <div id="my-requests-list" class="dashboard-section" style="display: none;">
+          <h2>Taleplerim</h2>
+          
+          <div class="calendar-view-toggle">
+            <button onclick="toggleView('table')" class="btn-primary">Tablo Görünümü</button>
+            <button onclick="toggleView('calendar')" class="btn-primary">Takvim Görünümü</button>
+          </div>
+          
+          <div id="requests-table-view" class="table-container">
+            <div id="myRequestsLoading" class="loading-overlay" style="display: none;">
+              <div class="loading-container">
+                <div class="cigarette-shelf">
+                  <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                   <div class="shelf-slot"><div class="package"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                </div>
+                <div class="loading-text">Yükleniyor</div>
+              </div>
+            </div>
+            <!-- Mevcut tablo görünümü -->
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Talep Tarihi</th>
+                  <th>Planlanan Tarih</th>
+                  <th>Bayi Adı</th>
+                  <th>Yapılacak İş</th>
+                  <th>POSM Adı</th>
+                  <th>Durum</th>
+                  <th>İşlemler</th>
+                </tr>
+              </thead>
+              <tbody id="myRequestsTableBody">
+                <!-- Örnek satır yapısı -->
+                <tr>
+                  <td>...</td>
+                  <td>...</td>
+                  <td>...</td>
+                  <td>...</td>
+                  <td>...</td>
+                  <td>...</td>
+                  <td>
+                    <div class="btn-container">
+                      <button class="action-btn btn-detail" onclick="showRequestDetails(this)" data-request-id="${request.id}">
+                        <i class="fas fa-search"></i>Detay
+                      </button>
+                      <button class="action-btn btn-update" onclick="updateRequest(this)" data-request-id="${request.id}">
+                        <i class="fas fa-edit"></i>Güncelle
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <div id="requests-calendar-view" class="calendar-container" style="display: none;">
+            <div id="calendarLoading" class="loading-overlay" style="display: none;">
+              <div class="loading-container">
+                <div class="cigarette-shelf">
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.15s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.3s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.45s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.6s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.75s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.9s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.05s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.2s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.35s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.5s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.65s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.8s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.95s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.1s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.25s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.4s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.55s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.7s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.85s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 3s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 3.15s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 3.3s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 3.45s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                </div>
+                <div class="loading-text">Yükleniyor</div>
+              </div>
+            </div>
+            <div id="calendar"></div>
+          </div>
+        </div>
+
+        <!-- Tüm talepler listesi (Admin) -->
+        <div id="all-requests-list" class="dashboard-section admin-only" style="display: none;">
+          <h2>Tüm Talepler</h2>
+          <div class="table-container">
+            <div id="allRequestsLoading" class="loading-overlay" style="display: none;">
+              <div class="loading-container">
+                <div class="cigarette-shelf">
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.15s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.3s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.45s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.6s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.75s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 0.9s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.05s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.2s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.35s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.5s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.65s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.8s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 1.95s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.1s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.25s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.4s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.55s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.7s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 2.85s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 3s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 3.15s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 3.3s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                  <div class="shelf-slot"><div class="package" style="animation-delay: 3.45s"><div class="package-top"></div><div class="package-bottom"></div></div></div>
+                </div>
+                <div class="loading-text">Yükleniyor</div>
+              </div>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Talep Tarihi</th>
+                  <th>Planlanan Tarih</th>
+                  <th>Kullanıcı</th>
+                  <th>Territory</th>
+                  <th>Bayi Kodu</th>
+                  <th>Bayi Adı</th>
+                  <th>Yapılacak İş</th>
+                  <th>POSM Adı</th>
+                  <th>Durum</th>
+                  <th>İşlemler</th>
+                </tr>
+              </thead>
+              <tbody id="allRequestsTableBody">
+                <!-- Tüm talepler buraya yüklenecek -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- POSM Yönetimi (Admin) -->
+        <div id="posm-management" class="dashboard-section admin-only">
+          <h2>POSM Yönetimi</h2>
+          <div class="posm-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>POSM Adı</th>
+                  <th>Hazır Adet</th>
+                  <th>Tamir Bekleyen</th>
+                  <th>İşlemler</th>
+                </tr>
+              </thead>
+              <tbody id="posmTableBody">
+                <!-- JavaScript ile doldurulacak -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <?!= include('DashboardScript'); ?>
+  </body>
+</html>

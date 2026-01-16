@@ -1,0 +1,40 @@
+.depot-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.depot-selector label {
+  font-weight: 600;
+  color: #2d3748;
+  font-size: 14px;
+}
+
+.depot-select {
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: white;
+  font-size: 14px;
+  color: #2d3748;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 150px;
+}
+
+.depot-select:hover {
+  border-color: #cbd5e0;
+}
+
+.depot-select:focus {
+  outline: none;
+  border-color: #4299e1;
+  box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
+}
+
+.depot-selector-loading {
+  padding: 8px 12px;
+  color: #718096;
+  font-size: 14px;
+}
